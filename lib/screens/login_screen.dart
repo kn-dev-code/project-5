@@ -23,7 +23,7 @@ class LoginScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 24),
-              Icon(Icons.sports_soccer, size: 72, color: colors.primary),
+              Icon(Icons.sports_football, size: 72, color: colors.primary),
               const SizedBox(height: 32),
               const TextField(
                 decoration: InputDecoration(

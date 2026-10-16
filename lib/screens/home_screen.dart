@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'game_select_screen.dart';
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -20,7 +22,7 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(Icons.sports_soccer, size: 96, color: colors.primary),
+              Icon(Icons.sports_football, size: 96, color: colors.primary),
               const SizedBox(height: 16),
               Text(
                 'Football Winner',
@@ -30,10 +32,11 @@ class HomeScreen extends StatelessWidget {
                     ),
               ),
               const SizedBox(height: 48),
-              // TODO: open game selection.
               FilledButton.icon(
-                onPressed: () {},
-                icon: const Icon(Icons.sports_soccer),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const GameSelectScreen()),
+                ),
+                icon: const Icon(Icons.sports_football),
                 label: const Text('Select Game'),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),

@@ -1,0 +1,48 @@
+enum GameStatus { live, upcoming, finished }
+
+/// Which side of a game a user picks to win.
+enum TeamSide { home, away }
+
+class Game {
+  const Game({
+    required this.id,
+    required this.league,
+    required this.homeTeam,
+    required this.awayTeam,
+    required this.status,
+    this.homeScore = 0,
+    this.awayScore = 0,
+    this.quarter,
+    this.clock,
+    this.kickoff,
+  });
+
+  final String id;
+  final String league;
+  final String homeTeam;
+  final String awayTeam;
+  final GameStatus status;
+  final int homeScore;
+  final int awayScore;
+
+  /// Current quarter (1-4, 5 for overtime), only set while the game is live.
+  final int? quarter;
+
+  /// Time left in the quarter, e.g. '8:42', only set while the game is live.
+  final String? clock;
+
+  /// Kickoff time, only set for upcoming games.
+  final DateTime? kickoff;
+
+  bool get isLive => status == GameStatus.live;
+
+  /// Quarter and clock for display, e.g. 'Q2 8:42' or 'OT 3:10'.
+  String? get gameClock {
+    if (quarter == null) return null;
+    final period = quarter! > 4 ? 'OT' : 'Q$quarter';
+    return clock == null ? period : '$period $clock';
+  }
+
+  String teamName(TeamSide side) =>
+      side == TeamSide.home ? homeTeam : awayTeam;
+}
