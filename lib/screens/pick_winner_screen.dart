@@ -3,23 +3,25 @@ import 'package:flutter/material.dart';
 import '../models/game.dart';
 
 class PickWinnerScreen extends StatefulWidget {
-  const PickWinnerScreen({super.key, required this.game});
+  const PickWinnerScreen({super.key, required this.game, this.initialPick});
 
   final Game game;
+
+  /// The user's previously saved pick for this game, if any.
+  final TeamSide? initialPick;
 
   @override
   State<PickWinnerScreen> createState() => _PickWinnerScreenState();
 }
 
 class _PickWinnerScreenState extends State<PickWinnerScreen> {
-  TeamSide? _pick;
+  late TeamSide? _pick = widget.initialPick;
 
+  /// Pops with the chosen side; the caller is responsible for saving it.
   void _confirm() {
     final pick = _pick;
     if (pick == null) return;
 
-    // TODO: save the bet once there is a backend. For now this only confirms
-    // the pick and returns to the game list.
     final messenger = ScaffoldMessenger.of(context);
     Navigator.of(context).pop(pick);
     messenger.showSnackBar(

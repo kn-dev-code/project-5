@@ -36,6 +36,14 @@ class Game {
 
   bool get isLive => status == GameStatus.live;
 
+  bool get isFinished => status == GameStatus.finished;
+
+  /// The side that won, or null if the game isn't over or ended in a tie.
+  TeamSide? get winner {
+    if (!isFinished || homeScore == awayScore) return null;
+    return homeScore > awayScore ? TeamSide.home : TeamSide.away;
+  }
+
   /// Quarter and clock for display, e.g. 'Q2 8:42' or 'OT 3:10'.
   String? get gameClock {
     if (quarter == null) return null;
