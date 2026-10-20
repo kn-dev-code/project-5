@@ -2,8 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../data/fake_crowd.dart';
 import '../data/game_feed.dart';
 import '../data/pick_store.dart';
+import '../data/wallet_store.dart';
+import '../models/bet.dart';
+import '../models/crowd_stats.dart';
 import '../models/game.dart';
 import 'pick_winner_screen.dart';
 
@@ -12,12 +16,14 @@ class GameSelectScreen extends StatefulWidget {
     super.key,
     this.feed,
     this.pickStore,
+    this.wallet,
     this.refreshInterval = const Duration(seconds: 30),
   });
 
   /// Where games come from. Defaults to the shared [gameFeed].
   final GameFeed? feed;
   final PickStore? pickStore;
+  final WalletStore? wallet;
 
   /// How often scores are re-fetched while the screen is open.
   final Duration refreshInterval;
@@ -29,10 +35,13 @@ class GameSelectScreen extends StatefulWidget {
 class _GameSelectScreenState extends State<GameSelectScreen> {
   late final GameFeed _feed = widget.feed ?? gameFeed;
   late final PickStore _pickStore = widget.pickStore ?? PickStore();
+  late final WalletStore _wallet = widget.wallet ?? WalletStore();
   late final Timer _refreshTimer;
 
   List<Game>? _games;
   Map<String, TeamSide> _picks = {};
+  Map<String, Bet> _bets = {};
+  int _balance = 0;
 
   @override
   void initState() {
@@ -48,65 +57,106 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
   }
 
   Future<void> _load() async {
-    final (games, picks) = await (
-      _feed.fetchGames(),
+    final games = await _feed.fetchGames();
+    await _update(games, previous: null);
+  }
+
+  Future<void> _refresh() async {
+    final games = await _feed.fetchGames();
+    await _update(games, previous: _games);
+  }
+
+  /// Shows [games], pays out bets on finished games, and tells the user how
+  /// their picks did. [previous] is null on first load.
+  Future<void> _update(
+    List<Game> games, {
+    required List<Game>? previous,
+  }) async {
+    final settled = <String, Bet>{
+      for (final game in games) game.id: ?await _wallet.settle(game),
+    };
+    final (picks, bets, balance) = await (
       _pickStore.loadPicks(),
+      _wallet.loadBets(),
+      _wallet.loadBalance(),
     ).wait;
     if (!mounted) return;
     setState(() {
       _games = games;
       _picks = picks;
+      _bets = bets;
+      _balance = balance;
     });
-  }
 
-  Future<void> _refresh() async {
-    final previous = _games;
-    final games = await _feed.fetchGames();
-    if (!mounted) return;
-    setState(() => _games = games);
-    if (previous != null) _announceResults(previous, games);
-  }
-
-  /// Tells the user how their picks did for games that just ended.
-  void _announceResults(List<Game> previous, List<Game> current) {
     final wasFinished = {
-      for (final g in previous)
+      for (final g in previous ?? games)
         if (g.isFinished) g.id,
     };
     final messages = [
-      for (final game in current)
-        if (game.isFinished &&
-            !wasFinished.contains(game.id) &&
-            _picks.containsKey(game.id))
-          _resultMessage(game, _picks[game.id]!),
+      for (final game in games)
+        if (settled.containsKey(game.id) ||
+            (game.isFinished &&
+                !wasFinished.contains(game.id) &&
+                picks.containsKey(game.id)))
+          _resultMessage(game, picks[game.id], settled[game.id]),
     ];
     if (messages.isEmpty) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(messages.join('\n'))));
   }
 
-  static String _resultMessage(Game game, TeamSide pick) {
+  static String _resultMessage(Game game, TeamSide? pick, Bet? bet) {
     final winner = game.winner;
+    final String result;
     if (winner == null) {
-      return '${game.homeTeam} vs ${game.awayTeam} ended in a tie.';
+      result = '${game.homeTeam} vs ${game.awayTeam} ended in a tie.';
+    } else {
+      final outcome = winner == (bet?.side ?? pick)
+          ? 'Your pick was right!'
+          : 'Your pick missed.';
+      result = '${game.teamName(winner)} won! $outcome';
     }
-    final outcome = winner == pick
-        ? 'Your pick was right!'
-        : 'Your pick missed.';
-    return '${game.teamName(winner)} won! $outcome';
+    if (bet == null) return result;
+    return '$result ${_betOutcome(game, bet)}';
   }
 
+  static String _betOutcome(Game game, Bet bet) {
+    if (game.winner == null) return '${bet.amount} coins refunded.';
+    final payout = bet.payout ?? 0;
+    return payout > 0
+        ? 'You won $payout coins.'
+        : 'You lost ${bet.amount} coins.';
+  }
+
+  CrowdStats _crowd(Game game) =>
+      fakeCrowdFor(game).withUser(pick: _picks[game.id], bet: _bets[game.id]);
+
   Future<void> _openPick(Game game) async {
-    final pick = await Navigator.of(context).push<TeamSide>(
+    final result = await Navigator.of(context).push<PickResult>(
       MaterialPageRoute(
-        builder: (_) =>
-            PickWinnerScreen(game: game, initialPick: _picks[game.id]),
+        builder: (_) => PickWinnerScreen(
+          game: game,
+          initialPick: _picks[game.id],
+          balance: _balance,
+          existingBet: _bets[game.id],
+        ),
       ),
     );
-    if (pick == null) return;
-    await _pickStore.savePick(game.id, pick);
+    if (result == null) return;
+    await _pickStore.savePick(game.id, result.side);
+    if (result.bet > 0) {
+      await _wallet.placeBet(game.id, result.side, result.bet);
+    }
+    final (bets, balance) = await (
+      _wallet.loadBets(),
+      _wallet.loadBalance(),
+    ).wait;
     if (!mounted) return;
-    setState(() => _picks = {..._picks, game.id: pick});
+    setState(() {
+      _picks = {..._picks, game.id: result.side};
+      _bets = bets;
+      _balance = balance;
+    });
   }
 
   @override
@@ -119,6 +169,18 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
         title: const Text('Select Game'),
         backgroundColor: colors.primary,
         foregroundColor: colors.onPrimary,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Row(
+              children: [
+                const Icon(Icons.monetization_on),
+                const SizedBox(width: 4),
+                Text('$_balance coins'),
+              ],
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: allGames == null
@@ -149,25 +211,26 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
             padding: EdgeInsets.symmetric(vertical: 16),
             child: Text('No live games right now.'),
           ),
-        for (final game in live)
-          _GameCard(
-            game: game,
-            pick: _picks[game.id],
-            onTap: () => _openPick(game),
-          ),
+        for (final game in live) _card(game, onTap: () => _openPick(game)),
         if (upcoming.isNotEmpty) ...[
           const _SectionHeader('Upcoming'),
-          for (final game in upcoming)
-            _GameCard(game: game, pick: _picks[game.id]),
+          for (final game in upcoming) _card(game),
         ],
         if (finished.isNotEmpty) ...[
           const _SectionHeader('Finished'),
-          for (final game in finished)
-            _GameCard(game: game, pick: _picks[game.id]),
+          for (final game in finished) _card(game),
         ],
       ],
     );
   }
+
+  Widget _card(Game game, {VoidCallback? onTap}) => _GameCard(
+    game: game,
+    crowd: _crowd(game),
+    pick: _picks[game.id],
+    bet: _bets[game.id],
+    onTap: onTap,
+  );
 }
 
 class _SectionHeader extends StatelessWidget {
@@ -189,12 +252,23 @@ class _SectionHeader extends StatelessWidget {
 }
 
 class _GameCard extends StatelessWidget {
-  const _GameCard({required this.game, this.pick, this.onTap});
+  const _GameCard({
+    required this.game,
+    required this.crowd,
+    this.pick,
+    this.bet,
+    this.onTap,
+  });
 
   final Game game;
 
+  /// Votes and bets from all users, including this one.
+  final CrowdStats crowd;
+
   /// The side the user picked to win, if they made a pick.
   final TeamSide? pick;
+
+  final Bet? bet;
 
   /// Only live games can be bet on, so only they get a tap handler.
   final VoidCallback? onTap;
@@ -243,6 +317,8 @@ class _GameCard extends StatelessWidget {
                   score: showScore ? game.awayScore : null,
                   isWinner: game.winner == TeamSide.away,
                 ),
+                const SizedBox(height: 12),
+                _VoteSplit(crowd: crowd),
                 if (game.isFinished) ...[
                   const SizedBox(height: 12),
                   Text(
@@ -263,6 +339,15 @@ class _GameCard extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (bet != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _betLabel(bet!),
+                    style: textTheme.labelMedium?.copyWith(
+                      color: colors.primary,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -278,7 +363,61 @@ class _GameCard extends StatelessWidget {
     if (game.isFinished) {
       return game.winner == pick ? '$picked - correct!' : '$picked - missed';
     }
-    return onTap != null ? '$picked (tap to change)' : picked;
+    if (onTap == null) return picked;
+    return bet == null ? '$picked (tap to change)' : picked;
+  }
+
+  String _betLabel(Bet bet) {
+    final staked = 'Bet: ${bet.amount} coins on ${game.teamName(bet.side)}';
+    final payout = bet.payout;
+    if (payout == null) {
+      final ifWon = crowd.winningPayout(bet.side, bet.amount);
+      return '$staked (pays $ifWon if it wins)';
+    }
+    if (game.winner == null) return '$staked - refunded';
+    return payout > 0 ? '$staked - won $payout' : '$staked - lost';
+  }
+}
+
+/// Bar showing what share of users voted for each team.
+class _VoteSplit extends StatelessWidget {
+  const _VoteSplit({required this.crowd});
+
+  final CrowdStats crowd;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final style = Theme.of(context).textTheme.labelSmall
+        ?.copyWith(color: colors.onSurfaceVariant);
+    final home = crowd.votePercent(TeamSide.home);
+    final away = crowd.votePercent(TeamSide.away);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text('$home%', style: style),
+            Expanded(
+              child: Text(
+                '${crowd.totalVotes} votes',
+                textAlign: TextAlign.center,
+                style: style,
+              ),
+            ),
+            Text('$away%', style: style),
+          ],
+        ),
+        const SizedBox(height: 4),
+        LinearProgressIndicator(
+          value: home / 100,
+          color: colors.primary,
+          backgroundColor: colors.tertiaryContainer,
+          borderRadius: BorderRadius.circular(4),
+        ),
+      ],
+    );
   }
 }
 
