@@ -27,31 +27,123 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late final BettingServer _server = widget.server ?? backend;
 
+  int? _balance;
+  bool _canClaimDailyReward = false;
+  bool _loadingReward = true;
+  bool _claimingReward = false;
+  String? _rewardError;
+
   @override
   void initState() {
     super.initState();
     _loadTheme();
+    _refreshRewards();
   }
 
   Future<void> _loadTheme() async {
-    final (themeId, backgroundId) = await (
-      _server.activeShopTheme(widget.session.token),
-      _server.activeShopBackground(widget.session.token),
-    ).wait;
-    if (!mounted) return;
-    activateBackground(backgroundId);
-    ShopItem? theme;
-    if (themeId == startingTheme.id) {
-      theme = startingTheme;
-    } else {
-      for (final item in shopItems) {
-        if (item.id == themeId && item.type == ShopItemType.theme) {
-          theme = item;
-          break;
+    try {
+      final (themeId, backgroundId) = await (
+        _server.activeShopTheme(widget.session.token),
+        _server.activeShopBackground(widget.session.token),
+      ).wait;
+      if (!mounted) return;
+      activateBackground(backgroundId);
+      ShopItem? theme;
+      if (themeId == startingTheme.id) {
+        theme = startingTheme;
+      } else {
+        for (final item in shopItems) {
+          if (item.id == themeId && item.type == ShopItemType.theme) {
+            theme = item;
+            break;
+          }
         }
       }
+      appTheme.activate(theme ?? startingTheme);
+    } catch (_) {
+      // The rest of the home screen remains usable if theme loading fails.
     }
-    appTheme.activate(theme ?? startingTheme);
+  }
+
+  Future<void> _refreshRewards() async {
+    if (!mounted) return;
+    setState(() {
+      _loadingReward = true;
+      _rewardError = null;
+    });
+    try {
+      final (balance, canClaim) = await (
+        _server.balance(widget.session.token),
+        _server.canClaimDailyReward(widget.session.token),
+      ).wait;
+      if (!mounted) return;
+      setState(() {
+        _balance = balance;
+        _canClaimDailyReward = canClaim;
+        _loadingReward = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingReward = false;
+        _rewardError = 'Could not load your coins. Please try again.';
+      });
+    }
+  }
+
+  Future<void> _claimDailyReward() async {
+    if (_claimingReward || _loadingReward || !_canClaimDailyReward) return;
+    setState(() => _claimingReward = true);
+    try {
+      final newBalance = await _server.claimDailyReward(widget.session.token);
+      if (!mounted) return;
+      setState(() {
+        _balance = newBalance;
+        _canClaimDailyReward = false;
+        _rewardError = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You claimed 250 free coins!')),
+      );
+    } on BetRejected catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+      await _refreshRewards();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not claim reward. Try again.')),
+      );
+      await _refreshRewards();
+    } finally {
+      if (mounted) setState(() => _claimingReward = false);
+    }
+  }
+
+  Future<void> _openGames() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => GameSelectScreen(session: widget.session),
+      ),
+    );
+    if (mounted) await _refreshRewards();
+  }
+
+  Future<void> _openShop() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ShopScreen(
+          session: widget.session,
+          server: _server,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _loadTheme();
+      await _refreshRewards();
+    }
   }
 
   Future<void> _logOut(BuildContext context) async {
@@ -110,14 +202,85 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: Theme.of(context).textTheme.bodyLarge
                           ?.copyWith(color: colors.onSurfaceVariant),
                     ),
-                    const SizedBox(height: 40),
-                    FilledButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              GameSelectScreen(session: widget.session),
+                    const SizedBox(height: 24),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.monetization_on, color: colors.primary),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _balance == null ? 'Coins: —' : 'Coins: $_balance',
+                                  style: Theme.of(context).textTheme.titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                                IconButton(
+                                  tooltip: 'Refresh balance and reward',
+                                  onPressed: _loadingReward || _claimingReward
+                                      ? null
+                                      : _refreshRewards,
+                                  icon: const Icon(Icons.refresh),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Daily Reward: 250 Free Coins',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 12),
+                            if (_loadingReward)
+                              const CircularProgressIndicator()
+                            else ...[
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: _canClaimDailyReward && !_claimingReward
+                                      ? _claimDailyReward
+                                      : null,
+                                  icon: Icon(
+                                    _canClaimDailyReward
+                                        ? Icons.card_giftcard
+                                        : Icons.check_circle_outline,
+                                  ),
+                                  label: Text(
+                                    _claimingReward
+                                        ? 'Claiming...'
+                                        : _canClaimDailyReward
+                                            ? 'Claim 250 Coins'
+                                            : 'Reward Claimed Today',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _canClaimDailyReward
+                                    ? 'Your free coins are ready!'
+                                    : 'Next reward resets at midnight UTC.',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                            if (_rewardError != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _rewardError!,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: colors.error),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton.icon(
+                      onPressed: _openGames,
                       icon: const Icon(Icons.sports_football),
                       label: const Text('Select Game'),
                       style: FilledButton.styleFrom(
@@ -126,14 +289,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 16),
                     OutlinedButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => ShopScreen(
-                            session: widget.session,
-                            server: _server,
-                          ),
-                        ),
-                      ),
+                      onPressed: _openShop,
                       icon: const Icon(Icons.storefront),
                       label: const Text('Shop'),
                       style: OutlinedButton.styleFrom(
