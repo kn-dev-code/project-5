@@ -223,6 +223,38 @@ void main() {
       expect(await server.balance(you), 900);
     });
 
+    test(
+      'crowd counts bettors per side, leaving out the asking player',
+      () async {
+        final server = BettingServer(
+          feed: _ScriptedFeed([
+            [_game(GameStatus.live)],
+          ]),
+          storage: MemoryStorage(),
+          accounts: accounts,
+          botCount: 0,
+        );
+        await server.fetchGames();
+        final players = [
+          for (final name in ['ann', 'ben', 'cat'])
+            await accounts.createAccount(name, 'password1'),
+        ];
+        await server.placeBet(players[0], 'x1', TeamSide.home, 10);
+        await server.placeBet(players[1], 'x1', TeamSide.home, 20);
+        await server.placeBet(players[2], 'x1', TeamSide.away, 30);
+
+        final everyone = await server.crowd(_game(GameStatus.live));
+        expect(everyone.homeBettors, 2);
+        expect(everyone.awayBettors, 1);
+        final others = await server.crowd(
+          _game(GameStatus.live),
+          token: players[0],
+        );
+        expect(others.homeBettors, 1);
+        expect(others.homePool, 20);
+      },
+    );
+
     test('refunds on a tie are not multiplied', () async {
       const tie = Game(
         id: 'x1',

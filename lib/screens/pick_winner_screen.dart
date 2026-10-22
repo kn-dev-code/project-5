@@ -69,6 +69,16 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
     bet.multiplier,
   );
 
+  /// Coins back per coin bet on [side], underdog bonus included.
+  double? _oddsFor(CrowdStats crowd, TeamSide side) {
+    final odds = crowd.odds(side);
+    if (odds == null) return null;
+    return odds * underdogMultiplier(widget.game.record(side));
+  }
+
+  static TeamSide _other(TeamSide side) =>
+      side == TeamSide.home ? TeamSide.away : TeamSide.home;
+
   @override
   void dispose() {
     _betController.dispose();
@@ -149,7 +159,8 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${crowd.totalVotes} votes',
+                    '${crowd.totalVotes} votes · '
+                    '${crowd.totalBettors} players have bet',
                     textAlign: TextAlign.center,
                     style: textTheme.bodySmall?.copyWith(
                       color: colors.onSurfaceVariant,
@@ -162,6 +173,9 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                       label: side == TeamSide.home ? 'Home' : 'Away',
                       record: game.record(side),
                       multiplier: underdogMultiplier(game.record(side)),
+                      odds: _oddsFor(crowd, side),
+                      bettors: crowd.bettors(side),
+                      pool: crowd.pool(side),
                       votePercent: crowd.votePercent(side),
                       selected: _pick == side,
                       onTap: _locked
@@ -194,6 +208,22 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                     ),
                   if (bet != null && _betError == null) ...[
                     const SizedBox(height: 8),
+                    Text(
+                      'Your odds: ${formatOdds(_payoutIfWon(crowd, bet) / bet.amount)} '
+                      'if you bet ${bet.amount} coins.',
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${crowd.bettors(bet.side)} '
+                      '${crowd.bettors(bet.side) == 1 ? 'player has' : 'players have'} '
+                      'bet on ${game.teamName(bet.side)}, '
+                      '${crowd.bettors(_other(bet.side))} on '
+                      '${game.teamName(_other(bet.side))}.',
+                    ),
+                    const SizedBox(height: 4),
                     Text(
                       'If ${game.teamName(bet.side)} wins you get '
                       '${_payoutIfWon(crowd, bet)} coins'
@@ -230,6 +260,9 @@ class _TeamOption extends StatelessWidget {
     required this.label,
     required this.record,
     required this.multiplier,
+    required this.odds,
+    required this.bettors,
+    required this.pool,
     required this.votePercent,
     required this.selected,
     required this.onTap,
@@ -241,6 +274,13 @@ class _TeamOption extends StatelessWidget {
 
   /// Underdog bonus for a winning bet on this team.
   final double multiplier;
+
+  /// Coins back per coin bet on this team, or null before anyone has bet.
+  final double? odds;
+  final int bettors;
+
+  /// Coins bet on this team.
+  final int pool;
   final int votePercent;
   final bool selected;
   final VoidCallback? onTap;
@@ -267,7 +307,18 @@ class _TeamOption extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              [label, ?record?.toString(), '$votePercent% of votes'].join(' · '),
+              [
+                label,
+                ?record?.toString(),
+                '$votePercent% of votes',
+              ].join(' · '),
+            ),
+            Text(
+              odds == null
+                  ? 'No bets yet'
+                  : 'Odds ${formatOdds(odds!)} · '
+                        '$bettors ${bettors == 1 ? 'bettor' : 'bettors'} · '
+                        '$pool coins',
             ),
             if (multiplier > 1)
               Text(

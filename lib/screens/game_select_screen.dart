@@ -11,6 +11,7 @@ import '../models/game.dart';
 import '../models/team_record.dart';
 import '../server/betting_server.dart';
 import '../server/payouts.dart';
+import '../widgets/score_effects.dart';
 import '../widgets/shop_background.dart';
 import 'pick_winner_screen.dart';
 
@@ -51,6 +52,13 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
   Map<String, CrowdStats> _crowds = {};
   int _balance = 0;
 
+  /// Scoring effects currently playing, keyed by a unique id.
+  final Map<int, ScoreEvent> _effects = {};
+  var _nextEffectId = 0;
+
+  /// At most this many effects play at once; older ones are dropped.
+  static const _maxEffects = 3;
+
   @override
   void initState() {
     super.initState();
@@ -88,12 +96,24 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
       _server.takeResults(_token),
     ).wait;
     if (!mounted) return;
+    final scored = previous == null
+        ? const <ScoreEvent>[]
+        : scoreEvents(previous, games, {
+            ...picks,
+            for (final MapEntry(:key, :value) in bets.entries) key: value.side,
+          });
     setState(() {
       _games = games;
       _picks = picks;
       _bets = bets;
       _crowds = crowds;
       _balance = balance;
+      for (final event in scored) {
+        _effects[_nextEffectId++] = event;
+      }
+      while (_effects.length > _maxEffects) {
+        _effects.remove(_effects.keys.first);
+      }
     });
 
     final wasFinished = {
@@ -205,9 +225,8 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
       );
     } on BetRejected catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -234,15 +253,26 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
           ),
         ],
       ),
-      body: ShopBackground(
-        child: SafeArea(
-          child: allGames == null
-              ? const Center(child: CircularProgressIndicator())
-              : RefreshIndicator(
-                  onRefresh: _refresh,
-                  child: _buildList(allGames),
-                ),
-        ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          ShopBackground(
+            child: SafeArea(
+              child: allGames == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : RefreshIndicator(
+                      onRefresh: _refresh,
+                      child: _buildList(allGames),
+                    ),
+            ),
+          ),
+          for (final MapEntry(key: id, value: event) in _effects.entries)
+            ScoreEffect(
+              key: ValueKey(id),
+              event: event,
+              onDone: () => setState(() => _effects.remove(id)),
+            ),
+        ],
       ),
     );
   }
@@ -399,7 +429,7 @@ class _GameCard extends StatelessWidget {
                   isWinner: game.winner == TeamSide.away,
                 ),
                 const SizedBox(height: 12),
-                _VoteSplit(crowd: crowd),
+                _VoteSplit(game: game, crowd: crowd),
                 if (game.isFinished) ...[
                   const SizedBox(height: 12),
                   Text(
@@ -482,11 +512,22 @@ class _GameCard extends StatelessWidget {
   }
 }
 
-/// Bar showing what share of users voted for each team.
+/// Bar showing what share of users voted for each team, and the odds and
+/// bettor count on each side.
 class _VoteSplit extends StatelessWidget {
-  const _VoteSplit({required this.crowd});
+  const _VoteSplit({required this.game, required this.crowd});
 
+  final Game game;
   final CrowdStats crowd;
+
+  String _betSummary(TeamSide side) {
+    final bettors = crowd.bettors(side);
+    final people = '$bettors ${bettors == 1 ? 'bettor' : 'bettors'}';
+    final odds = crowd.odds(side);
+    if (odds == null) return people;
+    final shown = odds * underdogMultiplier(game.record(side));
+    return '${formatOdds(shown)} · $people';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -518,6 +559,14 @@ class _VoteSplit extends StatelessWidget {
           color: colors.primary,
           backgroundColor: colors.tertiaryContainer,
           borderRadius: BorderRadius.circular(4),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Text(_betSummary(TeamSide.home), style: style),
+            const Spacer(),
+            Text(_betSummary(TeamSide.away), style: style),
+          ],
         ),
       ],
     );

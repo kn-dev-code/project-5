@@ -11,6 +11,7 @@ import 'package:footballapp/data/fake_games.dart';
 import 'package:footballapp/data/game_feed.dart';
 import 'package:footballapp/data/pick_store.dart';
 import 'package:footballapp/main.dart';
+import 'package:footballapp/models/bet.dart';
 import 'package:footballapp/models/crowd_stats.dart';
 import 'package:footballapp/models/game.dart';
 import 'package:footballapp/screens/game_select_screen.dart';
@@ -19,6 +20,7 @@ import 'package:footballapp/server/account_server.dart';
 import 'package:footballapp/server/betting_server.dart';
 import 'package:footballapp/server/payouts.dart';
 import 'package:footballapp/server/server_storage.dart';
+import 'package:footballapp/widgets/score_effects.dart';
 
 class _ScriptedFeed implements GameFeed {
   _ScriptedFeed(this._responses);
@@ -58,21 +60,11 @@ Future<void> _openAppAndLogIn(WidgetTester tester) async {
 Future<Game> _liveGame() async =>
     (await gameFeed.fetchGames()).firstWhere((g) => g.isLive);
 
-/// A live game whose away team is below .500, and the index of that game's
-/// home-team label in the game list. Even kickoff slots always do this.
-Future<(Game, int)> _underdogAwayGame() async {
-  final games = await gameFeed.fetchGames();
-  final game = games.firstWhere(
-    (game) => game.isLive && underdogMultiplier(game.awayRecord) > 1,
-  );
-  var index = 0;
-  for (final other in games) {
-    if (identical(other, game)) break;
-    if (other.homeTeam == game.homeTeam) index++;
-    if (other.awayTeam == game.homeTeam) index++;
-  }
-  return (game, index);
-}
+/// A live game whose away team is below .500. Even kickoff slots always do this.
+Future<Game> _underdogAwayGame() async =>
+    (await gameFeed.fetchGames()).firstWhere(
+      (game) => game.isLive && underdogMultiplier(game.awayRecord) > 1,
+    );
 
 /// A betting server that only knows the games in [feed], and a player who is
 /// logged in to it.
@@ -157,6 +149,7 @@ void main() {
 
     expect(find.text('Live Now'), findsOneWidget);
     expect(find.text(game.homeTeam), findsWidgets);
+    expect(find.textContaining('bettor'), findsWidgets);
 
     await tester.tap(find.text(game.homeTeam).first);
     await tester.pumpAndSettle();
@@ -231,23 +224,25 @@ void main() {
   testWidgets('Pick screen shows vote percentages and places a bet', (
     WidgetTester tester,
   ) async {
-    final game = await _liveGame();
+    final game = await _underdogAwayGame();
+    final record = game.awayRecord!;
+    final bonus = underdogMultiplier(record);
     await _openAppAndLogIn(tester);
     await tester.tap(find.text('Select Game'));
     await tester.pumpAndSettle();
 
     expect(find.text('1000 coins'), findsOneWidget);
 
-    await tester.tap(find.text(game.homeTeam).first);
+    final ends = MaterialLocalizations.of(tester.element(find.text('Live Now')))
+        .formatTimeOfDay(TimeOfDay.fromDateTime(game.endsAt!));
+    final card = find.textContaining('· ends $ends');
+    await tester.scrollUntilVisible(card, 300);
+    await tester.tap(card);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('% of votes'), findsNWidgets(2));
-    expect(find.textContaining('Away · ${game.awayRecord} · '), findsOneWidget);
-    final multiplier = underdogMultiplier(game.awayRecord);
-    expect(
-      find.text('${multiplier}x underdog bonus if they win'),
-      multiplier > 1 ? findsOneWidget : findsNothing,
-    );
+    expect(find.textContaining('Away · $record · '), findsOneWidget);
+    expect(find.text('${bonus}x underdog bonus if they win'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(ListTile, game.awayTeam));
     final betField = find.byType(TextField);
@@ -265,14 +260,20 @@ void main() {
 
     await tester.enterText(betField, '100');
     await tester.pump();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -240));
+    await tester.pump();
     expect(
       find.textContaining('If ${game.awayTeam} wins you get'),
       findsOneWidget,
     );
     expect(
-      find.textContaining('with a ${multiplier}x underdog bonus'),
-      multiplier > 1 ? findsOneWidget : findsNothing,
+      find.textContaining('with a ${bonus}x underdog bonus'),
+      findsOneWidget,
     );
+    expect(find.textContaining('Your odds: '), findsOneWidget);
+    expect(find.textContaining('if you bet 100 coins'), findsOneWidget);
+    expect(find.textContaining('players have bet'), findsOneWidget);
+    expect(find.textContaining('Odds '), findsWidgets);
 
     await tester.tap(confirm);
     await tester.pumpAndSettle();
@@ -367,6 +368,101 @@ void main() {
     await tester.pumpAndSettle();
     expect(appBackground.value, isNull);
     expect(await server.activeShopBackground(session.token), isNull);
+  });
+
+  testWidgets(
+    'Scores play fanfare for the backed team and coins for the other',
+    (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({'winner_picks': '{"x1":"home"}'});
+      Game live(int home, int away) => Game(
+        id: 'x1',
+        league: 'Pro Football',
+        homeTeam: 'Alpha Aces',
+        awayTeam: 'Beta Bulls',
+        status: GameStatus.live,
+        homeScore: home,
+        awayScore: away,
+        quarter: 3,
+        clock: '9:00',
+      );
+      final (server, session) = await _testServer(
+        _ScriptedFeed([
+          [live(0, 0)],
+          [live(7, 3)],
+        ]),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GameSelectScreen(session: session, server: server),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(ScoreEffect), findsNothing);
+
+      await tester.pump(const Duration(seconds: 30));
+      await tester.pump();
+      expect(find.text('TOUCHDOWN! Alpha Aces +7'), findsOneWidget);
+      expect(
+        find.text('Beta Bulls scored 3. Your coins are slipping away...'),
+        findsOneWidget,
+      );
+
+      await tester.pump(ScoreEffect.duration + const Duration(milliseconds: 50));
+      await tester.pump();
+      expect(find.byType(ScoreEffect), findsNothing);
+    },
+  );
+
+  test('Score events only fire for games the user backed', () {
+    Game game(String id, int home, int away) => Game(
+      id: id,
+      league: 'Pro Football',
+      homeTeam: 'Alpha Aces',
+      awayTeam: 'Beta Bulls',
+      status: GameStatus.live,
+      homeScore: home,
+      awayScore: away,
+    );
+    final events = scoreEvents(
+      [game('a', 0, 0), game('b', 0, 0)],
+      [game('a', 3, 0), game('b', 7, 7)],
+      {'a': TeamSide.away},
+    );
+    expect(events, hasLength(1));
+    expect(events.single.kind, ScoreEffectKind.moneyAway);
+    expect(events.single.team, 'Alpha Aces');
+    expect(events.single.points, 3);
+  });
+
+  test('Odds come from the pools and bettor counts include the user', () {
+    const crowd = CrowdStats(
+      homeVotes: 2,
+      awayVotes: 1,
+      homePool: 300,
+      awayPool: 100,
+      homeBettors: 4,
+      awayBettors: 1,
+    );
+    expect(crowd.odds(TeamSide.home), closeTo(1.333, 0.001));
+    expect(crowd.odds(TeamSide.away), 4.0);
+    expect(formatOdds(4), '4.00x');
+    final mine = crowd.withUser(
+      pick: TeamSide.away,
+      bet: const Bet(side: TeamSide.away, amount: 100),
+    );
+    expect(mine.awayBettors, 2);
+    expect(mine.totalBettors, 6);
+    expect(mine.odds(TeamSide.away), 2.5);
+    expect(
+      const CrowdStats(
+        homeVotes: 0,
+        awayVotes: 0,
+        homePool: 0,
+        awayPool: 0,
+      ).odds(TeamSide.home),
+      isNull,
+    );
   });
 
   test('Vote percentages add up to 100 and winners split the pool', () {

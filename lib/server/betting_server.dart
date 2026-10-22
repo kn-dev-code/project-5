@@ -49,9 +49,9 @@ class BettingServer {
     required ServerStorage storage,
     required AccountServer accounts,
     this.botCount = 100,
-  })  : _feed = feed,
-        _storage = storage,
-        _accounts = accounts;
+  }) : _feed = feed,
+       _storage = storage,
+       _accounts = accounts;
 
   static const startingBalance = 1000;
 
@@ -306,8 +306,7 @@ class BettingServer {
     final ledger = await _ledger();
 
     return {
-      for (final MapEntry(key: gameId, value: bets)
-          in ledger.bets.entries)
+      for (final MapEntry(key: gameId, value: bets) in ledger.bets.entries)
         gameId: ?bets[player],
     };
   }
@@ -315,8 +314,7 @@ class BettingServer {
   /// Votes and coins bet on [game] by everyone except the player [token]
   /// belongs to, so the app can add the player's own bet back in.
   Future<CrowdStats> crowd(Game game, {String? token}) async {
-    final excluding =
-        token == null ? null : await _playerFor(token);
+    final excluding = token == null ? null : await _playerFor(token);
 
     final ledger = await _ledger();
 
@@ -332,11 +330,15 @@ class BettingServer {
         .where((b) => b.side == side)
         .fold(0, (total, b) => total + b.amount);
 
+    int bettors(TeamSide side) => bets.where((b) => b.side == side).length;
+
     return CrowdStats(
       homeVotes: votes.home,
       awayVotes: votes.away,
       homePool: pool(TeamSide.home),
       awayPool: pool(TeamSide.away),
+      homeBettors: bettors(TeamSide.home),
+      awayBettors: bettors(TeamSide.away),
     );
   }
 
@@ -352,9 +354,7 @@ class BettingServer {
     final ledger = await _ledger();
 
     if (_games[gameId]?.isLive != true) {
-      throw const BetRejected(
-        'Betting is closed for this game.',
-      );
+      throw const BetRejected('Betting is closed for this game.');
     }
 
     _stake(ledger, player, gameId, side, amount);
@@ -364,41 +364,30 @@ class BettingServer {
 
   /// Returns half of the player's stake once, while the game is before
   /// halftime. The remaining stake stays in the pool and can still win.
-  Future<int> cashOutHalf(
-    String token,
-    String gameId,
-  ) async {
+  Future<int> cashOutHalf(String token, String gameId) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
 
     final game = _games[gameId];
 
     if (game?.isBeforeHalftime != true) {
-      throw const BetRejected(
-        'Cash out is only available before halftime.',
-      );
+      throw const BetRejected('Cash out is only available before halftime.');
     }
 
     final bet = ledger.bets[gameId]?[player];
 
     if (bet == null || bet.isSettled) {
-      throw const BetRejected(
-        'You have no active bet to cash out.',
-      );
+      throw const BetRejected('You have no active bet to cash out.');
     }
 
     if (bet.cashOutAmount > 0) {
-      throw const BetRejected(
-        'You already cashed out this bet.',
-      );
+      throw const BetRejected('You already cashed out this bet.');
     }
 
     final refund = bet.amount ~/ 2;
 
     if (refund == 0) {
-      throw const BetRejected(
-        'Your bet is too small to cash out half.',
-      );
+      throw const BetRejected('Your bet is too small to cash out half.');
     }
 
     ledger.bets[gameId]![player] = Bet(
@@ -408,8 +397,7 @@ class BettingServer {
       multiplier: bet.multiplier,
     );
 
-    ledger.balances[player] =
-        ledger.balance(player) + refund;
+    ledger.balances[player] = ledger.balance(player) + refund;
 
     await _save(ledger);
 
@@ -436,18 +424,9 @@ class BettingServer {
       (await _accounts.accountFor(token)).id;
 
   void _placeBotBets(_Ledger ledger, Game game) {
-    for (final (bot, bet) in fakeBetsFor(
-      game,
-      botCount: botCount,
-    )) {
+    for (final (bot, bet) in fakeBetsFor(game, botCount: botCount)) {
       if (bet.amount <= ledger.balance(bot)) {
-        _stake(
-          ledger,
-          bot,
-          game.id,
-          bet.side,
-          bet.amount,
-        );
+        _stake(ledger, bot, game.id, bet.side, bet.amount);
       }
     }
   }
@@ -462,18 +441,13 @@ class BettingServer {
     final balance = ledger.balance(player);
 
     if (amount <= 0 || amount > balance) {
-      throw BetRejected(
-        'Bets must be 1 to $balance coins.',
-      );
+      throw BetRejected('Bets must be 1 to $balance coins.');
     }
 
-    final bets =
-        ledger.bets.putIfAbsent(gameId, () => {});
+    final bets = ledger.bets.putIfAbsent(gameId, () => {});
 
     if (bets.containsKey(player)) {
-      throw const BetRejected(
-        'You already bet on this game.',
-      );
+      throw const BetRejected('You already bet on this game.');
     }
 
     bets[player] = Bet(
@@ -494,8 +468,7 @@ class BettingServer {
 
     final payouts = splitPool(bets, game.winner);
 
-    for (final MapEntry(key: player, value: bet)
-        in bets.entries) {
+    for (final MapEntry(key: player, value: bet) in bets.entries) {
       // The underdog bonus only applies to winning bets, not refunds, and is
       // paid on top of the pool rather than out of it.
       final payout = bet.side == game.winner
@@ -510,19 +483,15 @@ class BettingServer {
         multiplier: bet.multiplier,
       );
 
-      ledger.balances[player] =
-          ledger.balance(player) + payout;
+      ledger.balances[player] = ledger.balance(player) + payout;
 
       if (!isBot(player)) {
-        ledger.results
-            .putIfAbsent(player, () => [])
-            .add(game.id);
+        ledger.results.putIfAbsent(player, () => []).add(game.id);
       }
     }
   }
 
-  Future<_Ledger> _ledger() async =>
-      _loaded ??= await _load();
+  Future<_Ledger> _ledger() async => _loaded ??= await _load();
 
   Future<_Ledger> _load() async {
     final raw = await _storage.read();
@@ -531,9 +500,7 @@ class BettingServer {
       return _Ledger();
     }
 
-    return _Ledger.fromJson(
-      jsonDecode(raw) as Map<String, dynamic>,
-    );
+    return _Ledger.fromJson(jsonDecode(raw) as Map<String, dynamic>);
   }
 
   Future<void> _save(_Ledger ledger) =>
@@ -544,60 +511,46 @@ class BettingServer {
 class _Ledger {
   _Ledger();
 
-  factory _Ledger.fromJson(Map<String, dynamic> json) =>
-      _Ledger()
-        ..balances.addAll(
-          (json['balances'] as Map<String, dynamic>)
-              .cast<String, int>(),
-        )
-        ..dailyClaims.addAll(
-          (json['dailyClaims'] as Map<String, dynamic>? ??
-                  <String, dynamic>{})
-              .map(
-            (key, value) =>
-                MapEntry(key, value as String),
-          ),
-        )
-        ..ownedShopItems.addAll({
-          for (final MapEntry(key: player, value: ids)
-              in (json['ownedShopItems'] as Map<String, dynamic>? ?? {})
-                  .entries)
-            player: (ids as List).cast<String>().toSet(),
-        })
-        ..activeShopThemes.addAll(
-          (json['activeShopThemes'] as Map<String, dynamic>? ?? {})
-              .map((key, value) => MapEntry(key, value as String)),
-        )
-        ..activeShopBackgrounds.addAll(
-          (json['activeShopBackgrounds'] as Map<String, dynamic>? ?? {})
-              .map((key, value) => MapEntry(key, value as String)),
-        )
-        ..bets.addAll({
-          for (final MapEntry(key: gameId, value: bets)
-              in (json['bets'] as Map<String, dynamic>)
-                  .entries)
-            gameId: {
-              for (final MapEntry(
-                    key: player,
-                    value: bet,
-                  ) in (bets as Map<String, dynamic>).entries)
-                player: Bet.fromJson(
-                  bet as Map<String, dynamic>,
-                ),
-            },
-        })
-        ..seeded.addAll(
-          (json['seeded'] as List).cast<String>(),
-        )
-        ..settled.addAll(
-          (json['settled'] as List).cast<String>(),
-        )
-        ..results.addAll({
-          for (final MapEntry(:key, :value)
-              in (json['results'] as Map<String, dynamic>)
-                  .entries)
-            key: (value as List).cast<String>(),
-        });
+  factory _Ledger.fromJson(Map<String, dynamic> json) => _Ledger()
+    ..balances.addAll(
+      (json['balances'] as Map<String, dynamic>).cast<String, int>(),
+    )
+    ..dailyClaims.addAll(
+      (json['dailyClaims'] as Map<String, dynamic>? ?? <String, dynamic>{}).map(
+        (key, value) => MapEntry(key, value as String),
+      ),
+    )
+    ..ownedShopItems.addAll({
+      for (final MapEntry(key: player, value: ids)
+          in (json['ownedShopItems'] as Map<String, dynamic>? ?? {}).entries)
+        player: (ids as List).cast<String>().toSet(),
+    })
+    ..activeShopThemes.addAll(
+      (json['activeShopThemes'] as Map<String, dynamic>? ?? {}).map(
+        (key, value) => MapEntry(key, value as String),
+      ),
+    )
+    ..activeShopBackgrounds.addAll(
+      (json['activeShopBackgrounds'] as Map<String, dynamic>? ?? {}).map(
+        (key, value) => MapEntry(key, value as String),
+      ),
+    )
+    ..bets.addAll({
+      for (final MapEntry(key: gameId, value: bets)
+          in (json['bets'] as Map<String, dynamic>).entries)
+        gameId: {
+          for (final MapEntry(key: player, value: bet)
+              in (bets as Map<String, dynamic>).entries)
+            player: Bet.fromJson(bet as Map<String, dynamic>),
+        },
+    })
+    ..seeded.addAll((json['seeded'] as List).cast<String>())
+    ..settled.addAll((json['settled'] as List).cast<String>())
+    ..results.addAll({
+      for (final MapEntry(:key, :value)
+          in (json['results'] as Map<String, dynamic>).entries)
+        key: (value as List).cast<String>(),
+    });
 
   /// Coins per player. Players who haven't bet yet aren't listed.
   final balances = <String, int>{};
@@ -629,30 +582,23 @@ class _Ledger {
   final results = <String, List<String>>{};
 
   int balance(String player) =>
-      balances[player] ??
-      BettingServer.startingBalance;
+      balances[player] ?? BettingServer.startingBalance;
 
   Map<String, Object?> toJson() => {
-        'balances': balances,
-        'dailyClaims': dailyClaims,
-        'ownedShopItems': {
-          for (final entry in ownedShopItems.entries)
-            entry.key: entry.value.toList(),
-        },
-        'activeShopThemes': activeShopThemes,
-        'activeShopBackgrounds': activeShopBackgrounds,
-        'bets': {
-          for (final MapEntry(
-                key: gameId,
-                value: bets,
-              ) in bets.entries)
-            gameId: {
-              for (final e in bets.entries)
-                e.key: e.value.toJson(),
-            },
-        },
-        'seeded': seeded.toList(),
-        'settled': settled.toList(),
-        'results': results,
-      };
+    'balances': balances,
+    'dailyClaims': dailyClaims,
+    'ownedShopItems': {
+      for (final entry in ownedShopItems.entries)
+        entry.key: entry.value.toList(),
+    },
+    'activeShopThemes': activeShopThemes,
+    'activeShopBackgrounds': activeShopBackgrounds,
+    'bets': {
+      for (final MapEntry(key: gameId, value: bets) in bets.entries)
+        gameId: {for (final e in bets.entries) e.key: e.value.toJson()},
+    },
+    'seeded': seeded.toList(),
+    'settled': settled.toList(),
+    'results': results,
+  };
 }
