@@ -15,6 +15,7 @@ class Game {
     this.quarter,
     this.clock,
     this.kickoff,
+    this.endsAt,
   });
 
   final String id;
@@ -31,8 +32,12 @@ class Game {
   /// Time left in the quarter, e.g. '8:42', only set while the game is live.
   final String? clock;
 
-  /// Kickoff time, only set for upcoming games.
+  /// Kickoff time, if the feed knows it.
   final DateTime? kickoff;
+
+  /// When the game is scheduled to be over, if the feed knows it. Bets are
+  /// settled once the feed reports the game finished.
+  final DateTime? endsAt;
 
   bool get isLive => status == GameStatus.live;
 
@@ -63,6 +68,5 @@ class Game {
     return clock == null ? period : '$period $clock';
   }
 
-  String teamName(TeamSide side) =>
-      side == TeamSide.home ? homeTeam : awayTeam;
+  String teamName(TeamSide side) => side == TeamSide.home ? homeTeam : awayTeam;
 }

@@ -19,6 +19,12 @@ class _ScriptedFeed implements GameFeed {
   @override
   Future<List<Game>> fetchGames() async =>
       _responses[min(_calls++, _responses.length - 1)];
+
+  /// Games returned by [fetchGamesById], whatever ids are asked for.
+  List<Game> unlisted = const [];
+
+  @override
+  Future<List<Game>> fetchGamesById(Iterable<String> ids) async => unlisted;
 }
 
 Game _game(GameStatus status, {int home = 0, int away = 0}) => Game(
@@ -113,6 +119,32 @@ void main() {
       );
       await restarted.fetchGames();
       expect(await restarted.balance(me), 900 + payout);
+    });
+
+    test('settles bets on games that left the feed before finishing', () async {
+      final feed = _ScriptedFeed([
+        [_game(GameStatus.live)],
+        [],
+      ]);
+      final server = BettingServer(
+        feed: feed,
+        storage: MemoryStorage(),
+        accounts: accounts,
+      );
+      final me = await accounts.createAccount('alice', 'password1');
+      await server.fetchGames();
+      await server.placeBet(me, 'x1', TeamSide.home, 100);
+
+      feed.unlisted = [_game(GameStatus.live)];
+      await server.fetchGames();
+      expect((await server.bets(me))['x1']!.isSettled, isFalse);
+
+      feed.unlisted = [_game(GameStatus.finished, home: 7)];
+      await server.fetchGames();
+      final payout = (await server.bets(me))['x1']!.payout!;
+      expect(payout, greaterThan(100));
+      expect(await server.balance(me), 900 + payout);
+      expect(await server.takeResults(me), ['x1']);
     });
 
     test('pays out exactly the coins that were bet', () async {

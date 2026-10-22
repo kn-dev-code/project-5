@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:footballapp/data/auth.dart';
 import 'package:footballapp/data/backend.dart';
+import 'package:footballapp/data/fake_games.dart';
 import 'package:footballapp/data/game_feed.dart';
 import 'package:footballapp/data/pick_store.dart';
 import 'package:footballapp/main.dart';
@@ -25,6 +26,9 @@ class _ScriptedFeed implements GameFeed {
   @override
   Future<List<Game>> fetchGames() async =>
       _responses[min(_calls++, _responses.length - 1)];
+
+  @override
+  Future<List<Game>> fetchGamesById(Iterable<String> ids) async => const [];
 }
 
 const _username = 'tester';
@@ -45,6 +49,11 @@ Future<void> _openAppAndLogIn(WidgetTester tester) async {
   await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
   await tester.pumpAndSettle();
 }
+
+/// The first live game the shared feed lists, which is the first card in the
+/// Live Now section.
+Future<Game> _liveGame() async =>
+    (await gameFeed.fetchGames()).firstWhere((g) => g.isLive);
 
 /// A betting server that only knows the games in [feed], and a player who is
 /// logged in to it.
@@ -121,32 +130,33 @@ void main() {
   testWidgets('Select Game lists games and lets the user pick a live winner', (
     WidgetTester tester,
   ) async {
+    final game = await _liveGame();
     await _openAppAndLogIn(tester);
     await tester.tap(find.text('Select Game'));
     await tester.pumpAndSettle();
 
     expect(find.text('Live Now'), findsOneWidget);
-    expect(find.text('Riverside Raptors'), findsOneWidget);
+    expect(find.text(game.homeTeam), findsWidgets);
 
-    await tester.tap(find.text('Riverside Raptors'));
+    await tester.tap(find.text(game.homeTeam).first);
     await tester.pumpAndSettle();
 
     expect(find.text('Who will win?'), findsOneWidget);
     final confirm = find.widgetWithText(FilledButton, 'Confirm Pick');
     expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
 
-    await tester.tap(find.widgetWithText(ListTile, 'Northgate Knights'));
+    await tester.tap(find.widgetWithText(ListTile, game.awayTeam));
     await tester.pump();
     await tester.tap(confirm);
     await tester.pumpAndSettle();
 
-    expect(find.text('You picked Northgate Knights to win!'), findsOneWidget);
+    expect(find.text('You picked ${game.awayTeam} to win!'), findsOneWidget);
     expect(find.text('Live Now'), findsOneWidget);
     expect(
-      find.text('Your pick: Northgate Knights (tap to change)'),
+      find.text('Your pick: ${game.awayTeam} (tap to change)'),
       findsOneWidget,
     );
-    expect(await PickStore().loadPicks(), {'g1': TeamSide.away});
+    expect(await PickStore().loadPicks(), {game.id: TeamSide.away});
   });
 
   testWidgets('Game list refreshes periodically and shows who won', (
@@ -201,18 +211,19 @@ void main() {
   testWidgets('Pick screen shows vote percentages and places a bet', (
     WidgetTester tester,
   ) async {
+    final game = await _liveGame();
     await _openAppAndLogIn(tester);
     await tester.tap(find.text('Select Game'));
     await tester.pumpAndSettle();
 
     expect(find.text('1000 coins'), findsOneWidget);
 
-    await tester.tap(find.text('Riverside Raptors'));
+    await tester.tap(find.text(game.homeTeam).first);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('% of votes'), findsNWidgets(2));
 
-    await tester.tap(find.widgetWithText(ListTile, 'Northgate Knights'));
+    await tester.tap(find.widgetWithText(ListTile, game.awayTeam));
     final betField = find.byType(TextField);
     await tester.scrollUntilVisible(
       betField,
@@ -229,7 +240,7 @@ void main() {
     await tester.enterText(betField, '100');
     await tester.pump();
     expect(
-      find.textContaining('If Northgate Knights wins you get'),
+      find.textContaining('If ${game.awayTeam} wins you get'),
       findsOneWidget,
     );
 
@@ -237,12 +248,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('You picked Northgate Knights to win and bet 100 coins!'),
+      find.text('You picked ${game.awayTeam} to win and bet 100 coins!'),
       findsOneWidget,
     );
     expect(find.text('900 coins'), findsOneWidget);
     expect(
-      find.textContaining('Bet: 100 coins on Northgate Knights'),
+      find.textContaining('Bet: 100 coins on ${game.awayTeam}'),
       findsOneWidget,
     );
     final session = await Auth().restore();
@@ -314,13 +325,48 @@ void main() {
     expect(crowd.winningPayout(TeamSide.away, 100), 400);
   });
 
-  test('Fake feed eventually finishes every live game', () async {
-    final feed = FakeGameFeed(random: Random(1));
-    var games = await feed.fetchGames();
-    for (var i = 0; i < 40; i++) {
-      games = await feed.fetchGames();
-    }
-    expect(games.where((g) => g.isLive), isEmpty);
+  test('Fake games expire at their end time with a winner', () async {
+    var now = DateTime(2026, 10, 22, 12, 1);
+    final feed = FakeGameFeed(clock: () => now);
+    final games = await feed.fetchGames();
+    expect(games.where((g) => g.isLive), isNotEmpty);
+    expect(games.where((g) => g.status == GameStatus.upcoming), isNotEmpty);
+    expect(games.where((g) => g.isFinished), isNotEmpty);
+
+    final live = games.firstWhere((g) => g.isLive);
+    expect(live.endsAt, live.kickoff!.add(fakeGameLength));
+
+    now = live.endsAt!.subtract(const Duration(seconds: 1));
+    final [stillLive] = await feed.fetchGamesById([live.id]);
+    expect(stillLive.isLive, isTrue);
+    expect(stillLive.quarter, 4);
+
+    now = live.endsAt!;
+    final [ended] = await feed.fetchGamesById([live.id]);
+    expect(ended.isFinished, isTrue);
+    expect(ended.winner, isNotNull);
+    expect(ended.homeTeam, live.homeTeam);
+    expect(ended.homeScore, greaterThanOrEqualTo(live.homeScore));
+  });
+
+  test('Fake games look the same after the app restarts', () async {
+    final now = DateTime(2026, 10, 22, 12, 7);
+    List<(String, String, int, int)> snapshot(List<Game> games) => [
+      for (final g in games) (g.id, g.homeTeam, g.homeScore, g.awayScore),
+    ];
+    final before = await FakeGameFeed(clock: () => now).fetchGames();
+    final after = await FakeGameFeed(clock: () => now).fetchGames();
+    expect(snapshot(after), snapshot(before));
+  });
+
+  test('Every fake game ends with a winner, never a tie', () async {
+    final feed = FakeGameFeed(clock: () => DateTime(2030));
+    final games = await feed.fetchGamesById([
+      for (var slot = 0; slot < 500; slot++) 'fake-$slot',
+    ]);
+    expect(games, hasLength(500));
+    expect(games.where((g) => g.winner == null), isEmpty);
+    expect(await feed.fetchGamesById(['g1', 'fake-x']), isEmpty);
   });
 
   testWidgets('Create account screen checks the form and logs in', (

@@ -6,125 +6,126 @@ import 'fake_games.dart';
 /// Source of the latest game scores and statuses.
 abstract class GameFeed {
   Future<List<Game>> fetchGames();
+
+  /// Looks up games that [fetchGames] may no longer list, such as games that
+  /// ended a while ago. Ids the feed doesn't know are left out.
+  Future<List<Game>> fetchGamesById(Iterable<String> ids);
 }
 
 /// Shared feed used by the app so game progress survives leaving the screen.
 // TODO: swap for a real live-scores feed.
 final GameFeed gameFeed = FakeGameFeed();
 
-/// Simulates games progressing: every fetch after the first moves each live
-/// game forward a few minutes, adds random scores, and ends games whose time
-/// runs out.
+/// Simulates a never-ending schedule of games: one kicks off every
+/// [fakeKickoffInterval] and expires [fakeGameLength] later with a winner.
+///
+/// Each game's teams, score and clock depend only on its kickoff slot and the
+/// current time, so a game looks the same after the app restarts and keeps
+/// playing while the app is closed. Ties at the end are broken with a field
+/// goal so every bet wins or loses.
 class FakeGameFeed implements GameFeed {
-  FakeGameFeed({List<Game>? games, Random? random})
-    : _games = List.of(games ?? fakeGames),
-      _random = random ?? Random();
+  FakeGameFeed({DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
 
-  static const _secondsPerTick = 3 * 60;
+  static const _idPrefix = 'fake-';
+  static const _gameSeconds = 4 * _quarterSeconds;
   static const _quarterSeconds = 15 * 60;
-  static const _overtimeSeconds = 10 * 60;
+  static const _secondsPerDrive = 3 * 60;
 
-  final List<Game> _games;
-  final Random _random;
-  bool _started = false;
+  final DateTime Function() _clock;
 
   @override
   Future<List<Game>> fetchGames() async {
-    if (_started) {
-      for (var i = 0; i < _games.length; i++) {
-        _games[i] = _advance(_games[i]);
-      }
-    }
-    _started = true;
-    return List.unmodifiable(_games);
+    final now = _clock();
+    final interval = fakeKickoffInterval.inMilliseconds;
+    final oldest = now.subtract(fakeGameLength + fakeFinishedWindow);
+    final newest = now.add(fakeUpcomingWindow);
+    final first = (oldest.millisecondsSinceEpoch / interval).ceil();
+    final last = newest.millisecondsSinceEpoch ~/ interval;
+    return List.unmodifiable([
+      for (var slot = first; slot <= last; slot++) _game(slot, now),
+    ]);
   }
 
-  Game _advance(Game game) => switch (game.status) {
-    GameStatus.upcoming => _maybeKickOff(game),
-    GameStatus.live => _play(game),
-    GameStatus.finished => game,
-  };
+  @override
+  Future<List<Game>> fetchGamesById(Iterable<String> ids) async {
+    final now = _clock();
+    return [
+      for (final id in ids)
+        if (id.startsWith(_idPrefix))
+          if (int.tryParse(id.substring(_idPrefix.length)) case final slot?)
+            _game(slot, now),
+    ];
+  }
 
-  Game _maybeKickOff(Game game) {
-    final kickoff = game.kickoff;
-    if (kickoff != null && DateTime.now().isBefore(kickoff)) return game;
-    return _copy(
-      game,
-      status: GameStatus.live,
-      quarter: 1,
-      seconds: _quarterSeconds,
+  Game _game(int slot, DateTime now) {
+    final teams = Random(slot);
+    final league = fakeTeams.keys.elementAt(teams.nextInt(fakeTeams.length));
+    final names = List.of(fakeTeams[league]!)..shuffle(teams);
+
+    final kickoff = DateTime.fromMillisecondsSinceEpoch(
+      slot * fakeKickoffInterval.inMilliseconds,
     );
-  }
-
-  Game _play(Game game) {
-    var quarter = game.quarter ?? 1;
-    var seconds = _parseClock(game.clock) - _secondsPerTick;
-    final home = game.homeScore + _randomScore();
-    final away = game.awayScore + _randomScore();
-    final tied = home == away;
-
-    // Overtime is sudden death: any score ends it.
-    final overtimeDecided = quarter > 4 && !tied;
-    if (overtimeDecided ||
-        (seconds <= 0 && (quarter > 4 || (quarter == 4 && !tied)))) {
-      return _copy(
-        game,
-        status: GameStatus.finished,
-        homeScore: home,
-        awayScore: away,
-      );
-    }
-    if (seconds <= 0) {
-      quarter++;
-      seconds = quarter > 4 ? _overtimeSeconds : _quarterSeconds;
-    }
-    return _copy(
-      game,
-      status: GameStatus.live,
+    final endsAt = kickoff.add(fakeGameLength);
+    Game game(
+      GameStatus status, {
+      int home = 0,
+      int away = 0,
+      int? quarter,
+      String? clock,
+    }) => Game(
+      id: '$_idPrefix$slot',
+      league: league,
+      homeTeam: names[0],
+      awayTeam: names[1],
+      status: status,
       homeScore: home,
       awayScore: away,
       quarter: quarter,
-      seconds: seconds,
+      clock: clock,
+      kickoff: kickoff,
+      endsAt: endsAt,
     );
+
+    final elapsed = now.difference(kickoff);
+    if (elapsed.isNegative) return game(GameStatus.upcoming);
+
+    // Real time is scaled so the whole game fits in [fakeGameLength].
+    final played = min(
+      _gameSeconds,
+      elapsed.inMilliseconds * _gameSeconds ~/ fakeGameLength.inMilliseconds,
+    );
+    var home = 0;
+    var away = 0;
+    for (var drive = 0; drive < played ~/ _secondsPerDrive; drive++) {
+      final scoring = Random(slot * 64 + drive);
+      home += _score(scoring);
+      away += _score(scoring);
+    }
+
+    if (played < _gameSeconds) {
+      final left = _quarterSeconds - played % _quarterSeconds;
+      return game(
+        GameStatus.live,
+        home: home,
+        away: away,
+        quarter: played ~/ _quarterSeconds + 1,
+        clock: '${left ~/ 60}:${(left % 60).toString().padLeft(2, '0')}',
+      );
+    }
+    if (home == away) {
+      if (Random(slot * 64 + 63).nextBool()) {
+        home += 3;
+      } else {
+        away += 3;
+      }
+    }
+    return game(GameStatus.finished, home: home, away: away);
   }
 
-  int _randomScore() {
-    final roll = _random.nextInt(100);
+  static int _score(Random random) {
+    final roll = random.nextInt(100);
     if (roll < 15) return 7;
     if (roll < 25) return 3;
     return 0;
   }
-
-  static Game _copy(
-    Game game, {
-    required GameStatus status,
-    int? homeScore,
-    int? awayScore,
-    int? quarter,
-    int? seconds,
-  }) {
-    return Game(
-      id: game.id,
-      league: game.league,
-      homeTeam: game.homeTeam,
-      awayTeam: game.awayTeam,
-      status: status,
-      homeScore: homeScore ?? game.homeScore,
-      awayScore: awayScore ?? game.awayScore,
-      quarter: status == GameStatus.live ? quarter : null,
-      clock: status == GameStatus.live && seconds != null
-          ? _formatClock(seconds)
-          : null,
-      kickoff: status == GameStatus.upcoming ? game.kickoff : null,
-    );
-  }
-
-  static int _parseClock(String? clock) {
-    final parts = clock?.split(':');
-    if (parts == null || parts.length != 2) return 0;
-    return (int.tryParse(parts[0]) ?? 0) * 60 + (int.tryParse(parts[1]) ?? 0);
-  }
-
-  static String _formatClock(int seconds) =>
-      '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
 }

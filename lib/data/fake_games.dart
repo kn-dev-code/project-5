@@ -1,75 +1,37 @@
-import '../models/game.dart';
+// TODO: replace with a real live-scores feed. These are made-up teams for
+// testing only.
 
-// TODO: replace with a real live-scores feed. These are made-up teams and
-// scores for testing only.
-final List<Game> fakeGames = [
-  const Game(
-    id: 'g1',
-    league: 'Pro Football',
-    homeTeam: 'Riverside Raptors',
-    awayTeam: 'Northgate Knights',
-    status: GameStatus.live,
-    homeScore: 14,
-    awayScore: 10,
-    quarter: 2,
-    clock: '8:42',
-  ),
-  const Game(
-    id: 'g2',
-    league: 'Pro Football',
-    homeTeam: 'Harbor City Mariners',
-    awayTeam: 'Eastfield Stallions',
-    status: GameStatus.live,
-    homeScore: 21,
-    awayScore: 24,
-    quarter: 4,
-    clock: '2:15',
-  ),
-  const Game(
-    id: 'g3',
-    league: 'College Football',
-    homeTeam: 'Kingsbridge Bears',
-    awayTeam: 'Millbrook Hawks',
-    status: GameStatus.live,
-    homeScore: 0,
-    awayScore: 7,
-    quarter: 1,
-    clock: '11:03',
-  ),
-  const Game(
-    id: 'g4',
-    league: 'College Football',
-    homeTeam: 'Westvale Wolves',
-    awayTeam: 'Stonehill Titans',
-    status: GameStatus.live,
-    homeScore: 27,
-    awayScore: 27,
-    quarter: 5,
-    clock: '6:30',
-  ),
-  Game(
-    id: 'g5',
-    league: 'Pro Football',
-    homeTeam: 'Oakridge Outlaws',
-    awayTeam: 'Lakeshore Lightning',
-    status: GameStatus.upcoming,
-    kickoff: DateTime.now().add(const Duration(hours: 2)),
-  ),
-  Game(
-    id: 'g6',
-    league: 'College Football',
-    homeTeam: 'Brookfield Bison',
-    awayTeam: 'Highcliff Falcons',
-    status: GameStatus.upcoming,
-    kickoff: DateTime.now().add(const Duration(hours: 5, minutes: 30)),
-  ),
-  const Game(
-    id: 'g7',
-    league: 'Pro Football',
-    homeTeam: 'Southport Sharks',
-    awayTeam: 'Greenwood Rams',
-    status: GameStatus.finished,
-    homeScore: 31,
-    awayScore: 17,
-  ),
-];
+/// Made-up teams per league. Fake games pair two teams from the same league.
+const fakeTeams = {
+  'Pro Football': [
+    'Riverside Raptors',
+    'Northgate Knights',
+    'Harbor City Mariners',
+    'Eastfield Stallions',
+    'Oakridge Outlaws',
+    'Lakeshore Lightning',
+    'Southport Sharks',
+    'Greenwood Rams',
+  ],
+  'College Football': [
+    'Kingsbridge Bears',
+    'Millbrook Hawks',
+    'Westvale Wolves',
+    'Stonehill Titans',
+    'Brookfield Bison',
+    'Highcliff Falcons',
+  ],
+};
+
+/// A new fake game kicks off this often.
+const fakeKickoffInterval = Duration(minutes: 4);
+
+/// How long a fake game lasts from kickoff until it expires and is settled.
+/// Short so win/lose can be tested without waiting for a real game.
+const fakeGameLength = Duration(minutes: 12);
+
+/// How far ahead upcoming fake games are listed.
+const fakeUpcomingWindow = Duration(minutes: 8);
+
+/// How long finished fake games stay listed.
+const fakeFinishedWindow = Duration(minutes: 12);

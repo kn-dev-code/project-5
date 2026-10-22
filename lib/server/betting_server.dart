@@ -90,6 +90,20 @@ class BettingServer {
       }
     }
 
+    // Games can drop off the feed before the server sees them finish, e.g.
+    // while the app was closed, so look those up to pay their bets out.
+    final unlisted = [
+      for (final id in ledger.bets.keys)
+        if (!ledger.settled.contains(id) && !_games.containsKey(id)) id,
+    ];
+    if (unlisted.isNotEmpty) {
+      for (final game in await _feed.fetchGamesById(unlisted)) {
+        if (game.isFinished && ledger.settled.add(game.id)) {
+          _settle(ledger, game);
+        }
+      }
+    }
+
     await _save(ledger);
     return games;
   }

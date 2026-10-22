@@ -358,7 +358,10 @@ class _GameCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        game.league,
+                        game.endsAt == null || game.isFinished
+                            ? game.league
+                            : '${game.league} · ends '
+                                  '${_formatTime(context, game.endsAt!)}',
                         style: textTheme.labelMedium?.copyWith(
                           color: colors.onSurfaceVariant,
                         ),
@@ -550,7 +553,7 @@ class _StatusChip extends StatelessWidget {
         colors.onError,
       ),
       GameStatus.upcoming => (
-        _formatKickoff(context, game.kickoff),
+        game.kickoff == null ? 'Upcoming' : _formatTime(context, game.kickoff!),
         colors.secondaryContainer,
         colors.onSecondaryContainer,
       ),
@@ -574,10 +577,8 @@ class _StatusChip extends StatelessWidget {
       ),
     );
   }
-
-  static String _formatKickoff(BuildContext context, DateTime? kickoff) {
-    if (kickoff == null) return 'Upcoming';
-    return MaterialLocalizations.of(context)
-        .formatTimeOfDay(TimeOfDay.fromDateTime(kickoff));
-  }
 }
+
+String _formatTime(BuildContext context, DateTime time) =>
+    MaterialLocalizations.of(context)
+        .formatTimeOfDay(TimeOfDay.fromDateTime(time));
