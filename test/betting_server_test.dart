@@ -208,6 +208,45 @@ void main() {
       );
     });
 
+    test('purchases themes and persists one active theme per player', () async {
+      final storage = MemoryStorage();
+      final server = BettingServer(
+        feed: _ScriptedFeed([const []]),
+        storage: storage,
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('shopper', 'password1');
+
+      expect(await server.ownedShopItems(me), contains('basic_theme'));
+      expect(await server.activeShopTheme(me), 'basic_theme');
+      expect(await server.purchaseShopItem(me, 'midnight_theme'), 500);
+      expect(await server.ownedShopItems(me), contains('midnight_theme'));
+      await server.setActiveShopTheme(me, 'midnight_theme');
+      expect(await server.activeShopTheme(me), 'midnight_theme');
+      await server.setActiveShopTheme(me, 'basic_theme');
+      expect(await server.activeShopTheme(me), 'basic_theme');
+
+      await expectLater(
+        server.purchaseShopItem(me, 'midnight_theme'),
+        throwsA(isA<ShopRejected>()),
+      );
+      await expectLater(
+        server.setActiveShopTheme(me, 'stadium_lights'),
+        throwsA(isA<ShopRejected>()),
+      );
+
+      final restored = BettingServer(
+        feed: _ScriptedFeed([const []]),
+        storage: storage,
+        accounts: accounts,
+        botCount: 0,
+      );
+      expect(await restored.ownedShopItems(me), contains('midnight_theme'));
+      expect(await restored.activeShopTheme(me), 'basic_theme');
+      expect(await restored.balance(me), 500);
+    });
+
     test('rejects bets on closed games, over the balance, or twice', () async {
       final server = BettingServer(
         feed: _ScriptedFeed([

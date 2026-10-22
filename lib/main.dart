@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'data/app_theme.dart';
 import 'screens/start_screen.dart';
 
 void main() {
@@ -11,13 +12,14 @@ class FootballWinnerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Football Winner',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.green.shade800),
+    return ValueListenableBuilder<ThemeData>(
+      valueListenable: appTheme,
+      builder: (context, theme, _) => MaterialApp(
+        title: 'Football Winner',
+        debugShowCheckedModeBanner: false,
+        theme: theme,
+        home: const StartScreen(),
       ),
-      home: const StartScreen(),
     );
   }
 }

@@ -1,20 +1,57 @@
 import 'package:flutter/material.dart';
 
 import '../data/auth.dart';
+import '../data/app_theme.dart';
+import '../data/backend.dart';
+import '../models/shop_item.dart';
+import '../server/betting_server.dart';
 import 'game_select_screen.dart';
 import 'login_screen.dart';
+import 'shop_screen.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key, required this.session, this.auth});
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key, required this.session, this.auth, this.server});
 
   final Session session;
 
   /// Used to log out. Defaults to [Auth] with the shared accounts server.
   final Auth? auth;
 
+  final BettingServer? server;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late final BettingServer _server = widget.server ?? backend;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final themeId = await _server.activeShopTheme(widget.session.token);
+    if (!mounted) return;
+    ShopItem? theme;
+    if (themeId == startingTheme.id) {
+      theme = startingTheme;
+    } else {
+      for (final item in shopItems) {
+        if (item.id == themeId && item.type == ShopItemType.theme) {
+          theme = item;
+          break;
+        }
+      }
+    }
+    appTheme.activate(theme ?? startingTheme);
+  }
+
   Future<void> _logOut(BuildContext context) async {
-    final auth = this.auth ?? Auth();
-    await auth.logOut(session);
+    final auth = widget.auth ?? Auth();
+    await auth.logOut(widget.session);
     if (!context.mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => LoginScreen(auth: auth)),
@@ -57,7 +94,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'Logged in as ${session.account.username}',
+                'Logged in as ${widget.session.account.username}',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: colors.onSurfaceVariant,
@@ -67,7 +104,7 @@ class HomeScreen extends StatelessWidget {
               FilledButton.icon(
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => GameSelectScreen(session: session),
+                    builder: (_) => GameSelectScreen(session: widget.session),
                   ),
                 ),
                 icon: const Icon(Icons.sports_football),
@@ -77,9 +114,15 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              // TODO: open the shop.
               OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ShopScreen(
+                      session: widget.session,
+                      server: _server,
+                    ),
+                  ),
+                ),
                 icon: const Icon(Icons.storefront),
                 label: const Text('Shop'),
                 style: OutlinedButton.styleFrom(

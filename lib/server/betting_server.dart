@@ -5,6 +5,7 @@ import '../data/game_feed.dart';
 import '../models/bet.dart';
 import '../models/crowd_stats.dart';
 import '../models/game.dart';
+import '../models/shop_item.dart';
 import 'account_server.dart';
 import 'fake_players.dart';
 import 'payouts.dart';
@@ -13,6 +14,16 @@ import 'server_storage.dart';
 /// Thrown when the server refuses a bet or reward claim.
 class BetRejected implements Exception {
   const BetRejected(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// Thrown when a shop purchase cannot be completed.
+class ShopRejected implements Exception {
+  const ShopRejected(this.message);
 
   final String message;
 
@@ -87,6 +98,72 @@ class BettingServer {
   Future<int> balance(String token) async {
     final player = await _playerFor(token);
     return (await _ledger()).balance(player);
+  }
+
+  /// Items owned by the player, returned as catalog ids.
+  Future<Set<String>> ownedShopItems(String token) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    return Set.unmodifiable({
+      startingTheme.id,
+      ...(ledger.ownedShopItems[player] ?? <String>{}),
+    });
+  }
+
+  /// The id of the player's active theme, defaulting to the free basic theme.
+  Future<String> activeShopTheme(String token) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    return ledger.activeShopThemes[player] ?? startingTheme.id;
+  }
+
+  /// Activates one owned theme. Background items cannot be activated as themes.
+  Future<void> setActiveShopTheme(String token, String themeId) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    final item = themeId == startingTheme.id
+        ? startingTheme
+        : _shopItemById(themeId);
+    if (item == null || item.type != ShopItemType.theme) {
+      throw const ShopRejected('That theme is unavailable.');
+    }
+    if (themeId != startingTheme.id &&
+        !(ledger.ownedShopItems[player]?.contains(themeId) ?? false)) {
+      throw const ShopRejected('Purchase this theme before activating it.');
+    }
+    ledger.activeShopThemes[player] = themeId;
+    await _save(ledger);
+  }
+
+  /// Purchases a catalog item using the player's spendable coins.
+  /// The balance deduction and ownership record are saved together.
+  Future<int> purchaseShopItem(String token, String itemId) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    final item = _shopItemById(itemId);
+    if (item == null) throw const ShopRejected('That item is unavailable.');
+
+    final owned = ledger.ownedShopItems.putIfAbsent(player, () => <String>{});
+    if (owned.contains(itemId)) {
+      throw const ShopRejected('You already own this item.');
+    }
+
+    final balance = ledger.balance(player);
+    if (balance < item.price) {
+      throw ShopRejected('You need ${item.price - balance} more coins.');
+    }
+
+    ledger.balances[player] = balance - item.price;
+    owned.add(itemId);
+    await _save(ledger);
+    return ledger.balance(player);
+  }
+
+  static ShopItem? _shopItemById(String id) {
+    for (final item in shopItems) {
+      if (item.id == id) return item;
+    }
+    return null;
   }
 
   // ------------------------------------------------------------
@@ -416,6 +493,16 @@ class _Ledger {
                 MapEntry(key, value as String),
           ),
         )
+        ..ownedShopItems.addAll({
+          for (final MapEntry(key: player, value: ids)
+              in (json['ownedShopItems'] as Map<String, dynamic>? ?? {})
+                  .entries)
+            player: (ids as List).cast<String>().toSet(),
+        })
+        ..activeShopThemes.addAll(
+          (json['activeShopThemes'] as Map<String, dynamic>? ?? {})
+              .map((key, value) => MapEntry(key, value as String)),
+        )
         ..bets.addAll({
           for (final MapEntry(key: gameId, value: bets)
               in (json['bets'] as Map<String, dynamic>)
@@ -451,6 +538,12 @@ class _Ledger {
   /// Dates are stored as YYYY-MM-DD in UTC.
   final dailyClaims = <String, String>{};
 
+  /// Purchased shop item ids, keyed by player id.
+  final ownedShopItems = <String, Set<String>>{};
+
+  /// Active shop theme id per player.
+  final activeShopThemes = <String, String>{};
+
   /// Bets keyed by game id, then player id.
   final bets = <String, Map<String, Bet>>{};
 
@@ -470,6 +563,11 @@ class _Ledger {
   Map<String, Object?> toJson() => {
         'balances': balances,
         'dailyClaims': dailyClaims,
+        'ownedShopItems': {
+          for (final entry in ownedShopItems.entries)
+            entry.key: entry.value.toList(),
+        },
+        'activeShopThemes': activeShopThemes,
         'bets': {
           for (final MapEntry(
                 key: gameId,
