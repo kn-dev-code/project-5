@@ -1,3 +1,5 @@
+import 'team_record.dart';
+
 enum GameStatus { live, upcoming, finished }
 
 /// Which side of a game a user picks to win.
@@ -16,6 +18,8 @@ class Game {
     this.clock,
     this.kickoff,
     this.endsAt,
+    this.homeRecord,
+    this.awayRecord,
   });
 
   final String id;
@@ -38,6 +42,13 @@ class Game {
   /// When the game is scheduled to be over, if the feed knows it. Bets are
   /// settled once the feed reports the game finished.
   final DateTime? endsAt;
+
+  /// Each team's season record going into this game, if the feed has it.
+  final TeamRecord? homeRecord;
+  final TeamRecord? awayRecord;
+
+  TeamRecord? record(TeamSide side) =>
+      side == TeamSide.home ? homeRecord : awayRecord;
 
   bool get isLive => status == GameStatus.live;
 

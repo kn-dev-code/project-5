@@ -6,6 +6,7 @@ class Bet {
     required this.amount,
     this.payout,
     this.cashOutAmount = 0,
+    this.multiplier = 1.0,
   });
 
   factory Bet.fromJson(Map<String, dynamic> json) => Bet(
@@ -13,6 +14,7 @@ class Bet {
     amount: json['amount'] as int,
     payout: json['payout'] as int?,
     cashOutAmount: json['cashOutAmount'] as int? ?? 0,
+    multiplier: (json['multiplier'] as num?)?.toDouble() ?? 1.0,
   );
 
   final TeamSide side;
@@ -27,6 +29,10 @@ class Bet {
   /// Coins returned by a pre-halftime cash-out.
   final int cashOutAmount;
 
+  /// Bonus applied to a winning payout, locked in when the bet was placed.
+  /// Bets on teams with worse records get bigger multipliers.
+  final double multiplier;
+
   bool get isSettled => payout != null;
 
   Map<String, Object?> toJson() => {
@@ -34,5 +40,6 @@ class Bet {
     'amount': amount,
     'payout': payout,
     'cashOutAmount': cashOutAmount,
+    'multiplier': multiplier,
   };
 }

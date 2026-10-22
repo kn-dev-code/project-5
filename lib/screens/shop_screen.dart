@@ -21,6 +21,7 @@ class _ShopScreenState extends State<ShopScreen> {
   int _balance = 0;
   Set<String> _owned = {};
   String _activeThemeId = startingTheme.id;
+  String? _activeBackgroundId;
   bool _loading = true;
   String? _busyItem;
 
@@ -31,18 +32,21 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 
   Future<void> _refresh() async {
-    final (balance, owned, activeThemeId) = await (
+    final (balance, owned, activeThemeId, activeBackgroundId) = await (
       _server.balance(widget.session.token),
       _server.ownedShopItems(widget.session.token),
       _server.activeShopTheme(widget.session.token),
+      _server.activeShopBackground(widget.session.token),
     ).wait;
     if (!mounted) return;
     final activeTheme = _themeById(activeThemeId);
     if (activeTheme != null) appTheme.activate(activeTheme);
+    activateBackground(activeBackgroundId);
     setState(() {
       _balance = balance;
       _owned = owned;
       _activeThemeId = activeThemeId;
+      _activeBackgroundId = activeBackgroundId;
       _loading = false;
     });
   }
@@ -90,6 +94,35 @@ class _ShopScreenState extends State<ShopScreen> {
       setState(() => _activeThemeId = item.id);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${item.name} is now active.')),
+      );
+    } on ShopRejected catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } finally {
+      if (mounted) setState(() => _busyItem = null);
+    }
+  }
+
+  /// Shows [item] as the background, or removes the background if [item] is
+  /// already the active one.
+  Future<void> _toggleBackground(ShopItem item) async {
+    final newId = _activeBackgroundId == item.id ? null : item.id;
+    setState(() => _busyItem = item.id);
+    try {
+      await _server.setActiveShopBackground(widget.session.token, newId);
+      if (!mounted) return;
+      activateBackground(newId);
+      setState(() => _activeBackgroundId = newId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            newId == null
+                ? '${item.name} removed.'
+                : '${item.name} is now your background.',
+          ),
+        ),
       );
     } on ShopRejected catch (error) {
       if (!mounted) return;
@@ -190,7 +223,18 @@ class _ShopScreenState extends State<ShopScreen> {
           ListTile(
             title: Text(item.name),
             subtitle: Text('${item.typeLabel} · ${item.description}'),
-            trailing: inInventory && isTheme
+            trailing: inInventory && !isTheme
+                ? OutlinedButton(
+                    onPressed: _busyItem == null
+                        ? () => _toggleBackground(item)
+                        : null,
+                    child: Text(
+                      _activeBackgroundId == item.id
+                          ? 'Remove'
+                          : 'Use background',
+                    ),
+                  )
+                : inInventory && isTheme
                 ? active
                     ? const Chip(label: Text('Active'))
                     : OutlinedButton(

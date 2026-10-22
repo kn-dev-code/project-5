@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import '../models/game.dart';
+import '../models/team_record.dart';
 import 'fake_games.dart';
 
 /// Source of the latest game scores and statuses.
@@ -19,10 +20,11 @@ final GameFeed gameFeed = FakeGameFeed();
 /// Simulates a never-ending schedule of games: one kicks off every
 /// [fakeKickoffInterval] and expires [fakeGameLength] later with a winner.
 ///
-/// Each game's teams, score and clock depend only on its kickoff slot and the
-/// current time, so a game looks the same after the app restarts and keeps
-/// playing while the app is closed. Ties at the end are broken with a field
-/// goal so every bet wins or loses.
+/// Each game's teams, score, clock and season records depend only on its
+/// kickoff slot and the current time, so a game looks the same after the app
+/// restarts and keeps playing while the app is closed. Ties at the end are
+/// broken with a field goal so every bet wins or loses. One side is always
+/// below .500, so there is always an underdog to bet.
 class FakeGameFeed implements GameFeed {
   FakeGameFeed({DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
 
@@ -66,6 +68,7 @@ class FakeGameFeed implements GameFeed {
       slot * fakeKickoffInterval.inMilliseconds,
     );
     final endsAt = kickoff.add(fakeGameLength);
+    final (homeRecord, awayRecord) = _records(slot);
     Game game(
       GameStatus status, {
       int home = 0,
@@ -84,6 +87,8 @@ class FakeGameFeed implements GameFeed {
       clock: clock,
       kickoff: kickoff,
       endsAt: endsAt,
+      homeRecord: homeRecord,
+      awayRecord: awayRecord,
     );
 
     final elapsed = now.difference(kickoff);
@@ -127,5 +132,17 @@ class FakeGameFeed implements GameFeed {
     if (roll < 15) return 7;
     if (roll < 25) return 3;
     return 0;
+  }
+
+  /// Season records for [slot], stable across restarts. A 10-game season where
+  /// the favorite won 6 to 10 games. Even slots make the away team the
+  /// underdog; odd slots make the home team the underdog.
+  static (TeamRecord, TeamRecord) _records(int slot) {
+    final favoriteWins = 6 + slot.abs() % 5;
+    final homeWins = slot.isEven ? favoriteWins : 10 - favoriteWins;
+    return (
+      TeamRecord(homeWins, 10 - homeWins),
+      TeamRecord(10 - homeWins, homeWins),
+    );
   }
 }

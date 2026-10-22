@@ -34,7 +34,8 @@ class ShopRejected implements Exception {
 /// Stand-in for the betting backend. It owns every player's coins and bets,
 /// watches the scores feed, and pays out each game exactly once when it ends:
 /// players who backed the winner get their stake back plus a share of the
-/// pool (see [splitPool]).
+/// pool (see [splitPool]), times an underdog bonus based on the team's record
+/// (see [underdogMultiplier]).
 ///
 /// Players are identified by the session token [AccountServer] gave them, so
 /// a request can only touch the coins of whoever logged in. Calls with an
@@ -146,6 +147,37 @@ class BettingServer {
       throw const ShopRejected('Purchase this theme before activating it.');
     }
     ledger.activeShopThemes[player] = themeId;
+    await _save(ledger);
+  }
+
+  /// The id of the player's active background, or null if none is set.
+  Future<String?> activeShopBackground(String token) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    return ledger.activeShopBackgrounds[player];
+  }
+
+  /// Shows one owned background, or goes back to none when [backgroundId] is
+  /// null.
+  Future<void> setActiveShopBackground(
+    String token,
+    String? backgroundId,
+  ) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    if (backgroundId == null) {
+      ledger.activeShopBackgrounds.remove(player);
+      await _save(ledger);
+      return;
+    }
+    final item = _shopItemById(backgroundId);
+    if (item == null || item.type != ShopItemType.background) {
+      throw const ShopRejected('That background is unavailable.');
+    }
+    if (!(ledger.ownedShopItems[player]?.contains(backgroundId) ?? false)) {
+      throw const ShopRejected('Purchase this background before using it.');
+    }
+    ledger.activeShopBackgrounds[player] = backgroundId;
     await _save(ledger);
   }
 
@@ -361,6 +393,7 @@ class BettingServer {
       side: bet.side,
       amount: bet.amount - refund,
       cashOutAmount: refund,
+      multiplier: bet.multiplier,
     );
 
     ledger.balances[player] =
@@ -407,7 +440,7 @@ class BettingServer {
     }
   }
 
-  static void _stake(
+  void _stake(
     _Ledger ledger,
     String player,
     String gameId,
@@ -434,6 +467,7 @@ class BettingServer {
     bets[player] = Bet(
       side: side,
       amount: amount,
+      multiplier: underdogMultiplier(_games[gameId]?.record(side)),
     );
 
     ledger.balances[player] = balance - amount;
@@ -450,13 +484,18 @@ class BettingServer {
 
     for (final MapEntry(key: player, value: bet)
         in bets.entries) {
-      final payout = payouts[player]!;
+      // The underdog bonus only applies to winning bets, not refunds, and is
+      // paid on top of the pool rather than out of it.
+      final payout = bet.side == game.winner
+          ? applyMultiplier(payouts[player]!, bet.multiplier)
+          : payouts[player]!;
 
       bets[player] = Bet(
         side: bet.side,
         amount: bet.amount,
         payout: payout,
         cashOutAmount: bet.cashOutAmount,
+        multiplier: bet.multiplier,
       );
 
       ledger.balances[player] =
@@ -517,6 +556,10 @@ class _Ledger {
           (json['activeShopThemes'] as Map<String, dynamic>? ?? {})
               .map((key, value) => MapEntry(key, value as String)),
         )
+        ..activeShopBackgrounds.addAll(
+          (json['activeShopBackgrounds'] as Map<String, dynamic>? ?? {})
+              .map((key, value) => MapEntry(key, value as String)),
+        )
         ..bets.addAll({
           for (final MapEntry(key: gameId, value: bets)
               in (json['bets'] as Map<String, dynamic>)
@@ -558,6 +601,9 @@ class _Ledger {
   /// Active shop theme id per player.
   final activeShopThemes = <String, String>{};
 
+  /// Active shop background id per player. Players with none aren't listed.
+  final activeShopBackgrounds = <String, String>{};
+
   /// Bets keyed by game id, then player id.
   final bets = <String, Map<String, Bet>>{};
 
@@ -582,6 +628,7 @@ class _Ledger {
             entry.key: entry.value.toList(),
         },
         'activeShopThemes': activeShopThemes,
+        'activeShopBackgrounds': activeShopBackgrounds,
         'bets': {
           for (final MapEntry(
                 key: gameId,

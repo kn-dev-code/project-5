@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import '../models/bet.dart';
 import '../models/crowd_stats.dart';
 import '../models/game.dart';
+import '../models/team_record.dart';
+import '../server/payouts.dart';
 
 /// What the user chose: the side they picked and how many coins they bet on
 /// it (0 for no new bet).
@@ -55,8 +57,17 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
     if (widget.existingBet case final bet?) return bet;
     final pick = _pick;
     if (pick == null || _betAmount <= 0) return null;
-    return Bet(side: pick, amount: _betAmount);
+    return Bet(
+      side: pick,
+      amount: _betAmount,
+      multiplier: underdogMultiplier(widget.game.record(pick)),
+    );
   }
+
+  static int _payoutIfWon(CrowdStats crowd, Bet bet) => applyMultiplier(
+    crowd.winningPayout(bet.side, bet.amount),
+    bet.multiplier,
+  );
 
   @override
   void dispose() {
@@ -149,6 +160,8 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                     _TeamOption(
                       name: game.teamName(side),
                       label: side == TeamSide.home ? 'Home' : 'Away',
+                      record: game.record(side),
+                      multiplier: underdogMultiplier(game.record(side)),
                       votePercent: crowd.votePercent(side),
                       selected: _pick == side,
                       onTap: _locked
@@ -183,7 +196,8 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                     const SizedBox(height: 8),
                     Text(
                       'If ${game.teamName(bet.side)} wins you get '
-                      '${crowd.winningPayout(bet.side, bet.amount)} coins. '
+                      '${_payoutIfWon(crowd, bet)} coins'
+                      '${bet.multiplier > 1 ? ' with a ${bet.multiplier}x underdog bonus' : ''}. '
                       'Pool: ${crowd.totalPool} coins.',
                       style: textTheme.bodyMedium?.copyWith(
                         color: colors.primary,
@@ -214,6 +228,8 @@ class _TeamOption extends StatelessWidget {
   const _TeamOption({
     required this.name,
     required this.label,
+    required this.record,
+    required this.multiplier,
     required this.votePercent,
     required this.selected,
     required this.onTap,
@@ -221,6 +237,10 @@ class _TeamOption extends StatelessWidget {
 
   final String name;
   final String label;
+  final TeamRecord? record;
+
+  /// Underdog bonus for a winning bet on this team.
+  final double multiplier;
   final int votePercent;
   final bool selected;
   final VoidCallback? onTap;
@@ -246,7 +266,17 @@ class _TeamOption extends StatelessWidget {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('$label · $votePercent% of votes'),
+            Text(
+              [label, ?record?.toString(), '$votePercent% of votes'].join(' · '),
+            ),
+            if (multiplier > 1)
+              Text(
+                '${multiplier}x underdog bonus if they win',
+                style: TextStyle(
+                  color: colors.tertiary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             const SizedBox(height: 6),
             LinearProgressIndicator(
               value: votePercent / 100,

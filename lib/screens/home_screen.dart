@@ -5,6 +5,7 @@ import '../data/app_theme.dart';
 import '../data/backend.dart';
 import '../models/shop_item.dart';
 import '../server/betting_server.dart';
+import '../widgets/shop_background.dart';
 import 'game_select_screen.dart';
 import 'login_screen.dart';
 import 'shop_screen.dart';
@@ -33,8 +34,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadTheme() async {
-    final themeId = await _server.activeShopTheme(widget.session.token);
+    final (themeId, backgroundId) = await (
+      _server.activeShopTheme(widget.session.token),
+      _server.activeShopBackground(widget.session.token),
+    ).wait;
     if (!mounted) return;
+    activateBackground(backgroundId);
     ShopItem? theme;
     if (themeId == startingTheme.id) {
       theme = startingTheme;
@@ -76,60 +81,69 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Icon(Icons.sports_football, size: 96, color: colors.primary),
-              const SizedBox(height: 16),
-              Text(
-                'Football Winner',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
+      body: ShopBackground(
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: BackgroundPanel(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Icon(
+                      Icons.sports_football,
+                      size: 96,
+                      color: colors.primary,
                     ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Logged in as ${widget.session.account.username}',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: colors.onSurfaceVariant,
+                    const SizedBox(height: 16),
+                    Text(
+                      'Football Winner',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
                     ),
-              ),
-              const SizedBox(height: 40),
-              FilledButton.icon(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => GameSelectScreen(session: widget.session),
-                  ),
-                ),
-                icon: const Icon(Icons.sports_football),
-                label: const Text('Select Game'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ShopScreen(
-                      session: widget.session,
-                      server: _server,
+                    const SizedBox(height: 8),
+                    Text(
+                      'Logged in as ${widget.session.account.username}',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge
+                          ?.copyWith(color: colors.onSurfaceVariant),
                     ),
-                  ),
-                ),
-                icon: const Icon(Icons.storefront),
-                label: const Text('Shop'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
+                    const SizedBox(height: 40),
+                    FilledButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              GameSelectScreen(session: widget.session),
+                        ),
+                      ),
+                      icon: const Icon(Icons.sports_football),
+                      label: const Text('Select Game'),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ShopScreen(
+                            session: widget.session,
+                            server: _server,
+                          ),
+                        ),
+                      ),
+                      icon: const Icon(Icons.storefront),
+                      label: const Text('Shop'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
+            ),
           ),
         ),
       ),

@@ -16,3 +16,13 @@ class AppThemeController extends ValueNotifier<ThemeData> {
 }
 
 final appTheme = AppThemeController();
+
+/// The shop background shown behind the main screens, or null for none.
+final appBackground = ValueNotifier<ShopItem?>(null);
+
+/// Shows the background with [id], or none if [id] isn't a background.
+void activateBackground(String? id) {
+  appBackground.value = shopItems
+      .where((item) => item.id == id && item.type == ShopItemType.background)
+      .firstOrNull;
+}

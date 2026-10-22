@@ -8,7 +8,10 @@ import '../data/pick_store.dart';
 import '../models/bet.dart';
 import '../models/crowd_stats.dart';
 import '../models/game.dart';
+import '../models/team_record.dart';
 import '../server/betting_server.dart';
+import '../server/payouts.dart';
+import '../widgets/shop_background.dart';
 import 'pick_winner_screen.dart';
 
 class GameSelectScreen extends StatefulWidget {
@@ -231,13 +234,15 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: allGames == null
-            ? const Center(child: CircularProgressIndicator())
-            : RefreshIndicator(
-                onRefresh: _refresh,
-                child: _buildList(allGames),
-              ),
+      body: ShopBackground(
+        child: SafeArea(
+          child: allGames == null
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: _buildList(allGames),
+                ),
+        ),
       ),
     );
   }
@@ -258,7 +263,10 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
         if (live.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
-            child: Text('No live games right now.'),
+            child: BackgroundPanel(
+              padding: EdgeInsets.all(12),
+              child: Text('No live games right now.'),
+            ),
           ),
         for (final game in live) _card(game, onTap: () => _openPick(game)),
         if (upcoming.isNotEmpty) ...[
@@ -301,10 +309,16 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
-      child: Text(
-        title,
-        style: Theme.of(context).textTheme.titleMedium
-            ?.copyWith(fontWeight: FontWeight.bold),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: BackgroundPanel(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
+        ),
       ),
     );
   }
@@ -373,12 +387,14 @@ class _GameCard extends StatelessWidget {
                 const SizedBox(height: 12),
                 _TeamRow(
                   name: game.homeTeam,
+                  record: game.homeRecord,
                   score: showScore ? game.homeScore : null,
                   isWinner: game.winner == TeamSide.home,
                 ),
                 const SizedBox(height: 6),
                 _TeamRow(
                   name: game.awayTeam,
+                  record: game.awayRecord,
                   score: showScore ? game.awayScore : null,
                   isWinner: game.winner == TeamSide.away,
                 ),
@@ -452,8 +468,12 @@ class _GameCard extends StatelessWidget {
         : '';
     final payout = bet.payout;
     if (payout == null) {
-      final ifWon = crowd.winningPayout(bet.side, bet.amount);
-      return '$staked$returned (pays $ifWon if it wins)';
+      final ifWon = applyMultiplier(
+        crowd.winningPayout(bet.side, bet.amount),
+        bet.multiplier,
+      );
+      final bonus = bet.multiplier > 1 ? ' with ${bet.multiplier}x bonus' : '';
+      return '$staked$returned (pays $ifWon$bonus if it wins)';
     }
     if (game.winner == null) return '$staked$returned - refunded';
     return payout > 0
@@ -505,9 +525,15 @@ class _VoteSplit extends StatelessWidget {
 }
 
 class _TeamRow extends StatelessWidget {
-  const _TeamRow({required this.name, this.score, this.isWinner = false});
+  const _TeamRow({
+    required this.name,
+    this.record,
+    this.score,
+    this.isWinner = false,
+  });
 
   final String name;
+  final TeamRecord? record;
   final int? score;
   final bool isWinner;
 
@@ -517,7 +543,22 @@ class _TeamRow extends StatelessWidget {
 
     return Row(
       children: [
-        Expanded(child: Text(name, style: textTheme.titleMedium)),
+        Expanded(
+          child: Row(
+            children: [
+              Flexible(child: Text(name, style: textTheme.titleMedium)),
+              if (record != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '$record',
+                  style: textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
         if (isWinner)
           Padding(
             padding: const EdgeInsets.only(right: 8),

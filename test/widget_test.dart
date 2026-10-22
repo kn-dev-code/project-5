@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:footballapp/data/app_theme.dart';
 import 'package:footballapp/data/auth.dart';
 import 'package:footballapp/data/backend.dart';
 import 'package:footballapp/data/fake_games.dart';
@@ -13,8 +14,10 @@ import 'package:footballapp/main.dart';
 import 'package:footballapp/models/crowd_stats.dart';
 import 'package:footballapp/models/game.dart';
 import 'package:footballapp/screens/game_select_screen.dart';
+import 'package:footballapp/screens/shop_screen.dart';
 import 'package:footballapp/server/account_server.dart';
 import 'package:footballapp/server/betting_server.dart';
+import 'package:footballapp/server/payouts.dart';
 import 'package:footballapp/server/server_storage.dart';
 
 class _ScriptedFeed implements GameFeed {
@@ -55,6 +58,22 @@ Future<void> _openAppAndLogIn(WidgetTester tester) async {
 Future<Game> _liveGame() async =>
     (await gameFeed.fetchGames()).firstWhere((g) => g.isLive);
 
+/// A live game whose away team is below .500, and the index of that game's
+/// home-team label in the game list. Even kickoff slots always do this.
+Future<(Game, int)> _underdogAwayGame() async {
+  final games = await gameFeed.fetchGames();
+  final game = games.firstWhere(
+    (game) => game.isLive && underdogMultiplier(game.awayRecord) > 1,
+  );
+  var index = 0;
+  for (final other in games) {
+    if (identical(other, game)) break;
+    if (other.homeTeam == game.homeTeam) index++;
+    if (other.awayTeam == game.homeTeam) index++;
+  }
+  return (game, index);
+}
+
 /// A betting server that only knows the games in [feed], and a player who is
 /// logged in to it.
 Future<(BettingServer, Session)> _testServer(GameFeed feed) async {
@@ -74,6 +93,7 @@ Future<(BettingServer, Session)> _testServer(GameFeed feed) async {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  tearDown(() => appBackground.value = null);
 
   testWidgets('Login screen rejects missing or wrong details', (
     WidgetTester tester,
@@ -222,6 +242,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('% of votes'), findsNWidgets(2));
+    expect(find.textContaining('Away · ${game.awayRecord} · '), findsOneWidget);
+    final multiplier = underdogMultiplier(game.awayRecord);
+    expect(
+      find.text('${multiplier}x underdog bonus if they win'),
+      multiplier > 1 ? findsOneWidget : findsNothing,
+    );
 
     await tester.tap(find.widgetWithText(ListTile, game.awayTeam));
     final betField = find.byType(TextField);
@@ -242,6 +268,10 @@ void main() {
     expect(
       find.textContaining('If ${game.awayTeam} wins you get'),
       findsOneWidget,
+    );
+    expect(
+      find.textContaining('with a ${multiplier}x underdog bonus'),
+      multiplier > 1 ? findsOneWidget : findsNothing,
     );
 
     await tester.tap(confirm);
@@ -312,6 +342,33 @@ void main() {
     expect(await server.balance(session.token), 900 + payout);
   });
 
+  testWidgets('Owned backgrounds can be used and removed from the inventory', (
+    WidgetTester tester,
+  ) async {
+    final (server, session) = await _testServer(_ScriptedFeed([const []]));
+    await server.purchaseShopItem(session.token, 'stadium_lights');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ShopScreen(session: session, server: server),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Inventory'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Use background'));
+    await tester.pumpAndSettle();
+    expect(appBackground.value?.id, 'stadium_lights');
+    expect(await server.activeShopBackground(session.token), 'stadium_lights');
+    expect(find.text('Stadium Lights is now your background.'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Remove'));
+    await tester.pumpAndSettle();
+    expect(appBackground.value, isNull);
+    expect(await server.activeShopBackground(session.token), isNull);
+  });
+
   test('Vote percentages add up to 100 and winners split the pool', () {
     const crowd = CrowdStats(
       homeVotes: 2,
@@ -351,8 +408,18 @@ void main() {
 
   test('Fake games look the same after the app restarts', () async {
     final now = DateTime(2026, 10, 22, 12, 7);
-    List<(String, String, int, int)> snapshot(List<Game> games) => [
-      for (final g in games) (g.id, g.homeTeam, g.homeScore, g.awayScore),
+    List<(String, String, int, int, String, String)> snapshot(
+      List<Game> games,
+    ) => [
+      for (final g in games)
+        (
+          g.id,
+          g.homeTeam,
+          g.homeScore,
+          g.awayScore,
+          '${g.homeRecord}',
+          '${g.awayRecord}',
+        ),
     ];
     final before = await FakeGameFeed(clock: () => now).fetchGames();
     final after = await FakeGameFeed(clock: () => now).fetchGames();

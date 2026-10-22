@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:footballapp/data/game_feed.dart';
 import 'package:footballapp/models/bet.dart';
 import 'package:footballapp/models/game.dart';
+import 'package:footballapp/models/team_record.dart';
 import 'package:footballapp/server/account_server.dart';
 import 'package:footballapp/server/betting_server.dart';
 import 'package:footballapp/server/payouts.dart';
@@ -69,6 +70,18 @@ void main() {
       };
       expect(splitPool(bets, null), {'a': 100, 'b': 50});
       expect(splitPool(bets, TeamSide.away), {'a': 100, 'b': 50});
+    });
+  });
+
+  group('underdogMultiplier', () {
+    test('rewards worse records and never drops below 1x', () {
+      expect(underdogMultiplier(null), 1.0);
+      expect(underdogMultiplier(const TeamRecord(0, 0)), 1.0);
+      expect(underdogMultiplier(const TeamRecord(9, 1)), 1.0);
+      expect(underdogMultiplier(const TeamRecord(5, 5)), 1.0);
+      expect(underdogMultiplier(const TeamRecord(4, 6)), 1.2);
+      expect(underdogMultiplier(const TeamRecord(2, 8)), 1.6);
+      expect(underdogMultiplier(const TeamRecord(0, 10)), 2.0);
     });
   });
 
@@ -172,6 +185,112 @@ void main() {
         paid += (await server.bets(player))['x1']!.payout!;
       }
       expect(paid, 10 + 20 + 37);
+    });
+
+    test('winning bets on bad teams get the underdog bonus', () async {
+      Game game(GameStatus status, {int home = 0, int away = 0}) => Game(
+        id: 'x1',
+        league: 'Pro Football',
+        homeTeam: 'Alpha Aces',
+        awayTeam: 'Beta Bulls',
+        status: status,
+        homeScore: home,
+        awayScore: away,
+        homeRecord: const TeamRecord(9, 1),
+        awayRecord: const TeamRecord(0, 10),
+      );
+      final server = BettingServer(
+        feed: _ScriptedFeed([
+          [game(GameStatus.live)],
+          [game(GameStatus.finished, away: 3)],
+        ]),
+        storage: MemoryStorage(),
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('underdog', 'password1');
+      final you = await accounts.createAccount('favorite', 'password1');
+      await server.fetchGames();
+      await server.placeBet(me, 'x1', TeamSide.away, 100);
+      await server.placeBet(you, 'x1', TeamSide.home, 100);
+      expect((await server.bets(me))['x1']!.multiplier, 2.0);
+      expect((await server.bets(you))['x1']!.multiplier, 1.0);
+
+      await server.fetchGames();
+      // 200 from the pool, doubled by the bonus.
+      expect((await server.bets(me))['x1']!.payout, 400);
+      expect(await server.balance(me), 1300);
+      expect(await server.balance(you), 900);
+    });
+
+    test('refunds on a tie are not multiplied', () async {
+      const tie = Game(
+        id: 'x1',
+        league: 'Pro Football',
+        homeTeam: 'Alpha Aces',
+        awayTeam: 'Beta Bulls',
+        status: GameStatus.finished,
+        homeScore: 3,
+        awayScore: 3,
+        awayRecord: TeamRecord(0, 10),
+      );
+      const live = Game(
+        id: 'x1',
+        league: 'Pro Football',
+        homeTeam: 'Alpha Aces',
+        awayTeam: 'Beta Bulls',
+        status: GameStatus.live,
+        awayRecord: TeamRecord(0, 10),
+      );
+      final server = BettingServer(
+        feed: _ScriptedFeed([
+          [live],
+          [tie],
+        ]),
+        storage: MemoryStorage(),
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('tied', 'password1');
+      await server.fetchGames();
+      await server.placeBet(me, 'x1', TeamSide.away, 100);
+      expect((await server.bets(me))['x1']!.multiplier, 2.0);
+      await server.fetchGames();
+      expect((await server.bets(me))['x1']!.payout, 100);
+    });
+
+    test('uses one owned background at a time and remembers it', () async {
+      final storage = MemoryStorage();
+      final server = BettingServer(
+        feed: _ScriptedFeed([const []]),
+        storage: storage,
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('decorator', 'password1');
+
+      expect(await server.activeShopBackground(me), isNull);
+      await expectLater(
+        server.setActiveShopBackground(me, 'gridiron'),
+        throwsA(isA<ShopRejected>()),
+      );
+      await server.purchaseShopItem(me, 'stadium_lights');
+      await server.purchaseShopItem(me, 'midnight_theme');
+      await expectLater(
+        server.setActiveShopBackground(me, 'midnight_theme'),
+        throwsA(isA<ShopRejected>()),
+      );
+      await server.setActiveShopBackground(me, 'stadium_lights');
+
+      final restored = BettingServer(
+        feed: _ScriptedFeed([const []]),
+        storage: storage,
+        accounts: accounts,
+        botCount: 0,
+      );
+      expect(await restored.activeShopBackground(me), 'stadium_lights');
+      await restored.setActiveShopBackground(me, null);
+      expect(await restored.activeShopBackground(me), isNull);
     });
 
     test('cash out returns half the stake once before halftime', () async {
