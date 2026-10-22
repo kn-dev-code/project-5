@@ -1,4 +1,3 @@
-
 import 'dart:convert';
 
 import '../data/game_feed.dart';
@@ -282,6 +281,19 @@ class BettingServer {
   /// Returns how many coins the daily reward provides.
   Future<int> dailyRewardValue() async {
     return dailyRewardAmount;
+  }
+
+  /// The next daily reward reset, at midnight UTC.
+  /// This uses a calendar-day reset rather than a rolling 24-hour cooldown.
+  DateTime nextDailyRewardResetUtc() {
+    final now = DateTime.now().toUtc();
+    return DateTime.utc(now.year, now.month, now.day + 1);
+  }
+
+  /// How long until this player can claim again. Zero means ready to claim.
+  Future<Duration> timeUntilDailyReward(String token) async {
+    if (await canClaimDailyReward(token)) return Duration.zero;
+    return nextDailyRewardResetUtc().difference(DateTime.now().toUtc());
   }
 
   // ------------------------------------------------------------
