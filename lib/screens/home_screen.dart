@@ -37,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadTheme();
-    _refreshRewards();
+    _refreshRewards(awardOnLogin: true);
   }
 
   Future<void> _loadTheme() async {
@@ -65,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _refreshRewards() async {
+  Future<void> _refreshRewards({bool awardOnLogin = false}) async {
     if (!mounted) return;
     setState(() {
       _loadingReward = true;
@@ -76,12 +76,27 @@ class _HomeScreenState extends State<HomeScreen> {
         _server.balance(widget.session.token),
         _server.canClaimDailyReward(widget.session.token),
       ).wait;
+      var currentBalance = balance;
+      var rewardAvailable = canClaim;
+      if (awardOnLogin && canClaim) {
+        currentBalance = await _server.claimDailyReward(widget.session.token);
+        rewardAvailable = false;
+      }
       if (!mounted) return;
       setState(() {
-        _balance = balance;
-        _canClaimDailyReward = canClaim;
+        _balance = currentBalance;
+        _canClaimDailyReward = rewardAvailable;
         _loadingReward = false;
       });
+      if (awardOnLogin && canClaim) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Daily login reward: +${BettingServer.dailyRewardAmount} coins!',
+            ),
+          ),
+        );
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {

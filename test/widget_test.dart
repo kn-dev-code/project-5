@@ -15,6 +15,7 @@ import 'package:footballapp/models/bet.dart';
 import 'package:footballapp/models/crowd_stats.dart';
 import 'package:footballapp/models/game.dart';
 import 'package:footballapp/screens/game_select_screen.dart';
+import 'package:footballapp/screens/home_screen.dart';
 import 'package:footballapp/screens/shop_screen.dart';
 import 'package:footballapp/server/account_server.dart';
 import 'package:footballapp/server/betting_server.dart';
@@ -116,6 +117,44 @@ void main() {
     expect(find.text('Logged in as $_username'), findsOneWidget);
     expect(find.text('Select Game'), findsOneWidget);
     expect(find.text('Shop'), findsOneWidget);
+  });
+
+  testWidgets('Home screen grants the daily login reward only once', (
+    WidgetTester tester,
+  ) async {
+    final (server, session) = await _testServer(_ScriptedFeed([const []]));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(session: session, server: server),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Daily login reward: +${BettingServer.dailyRewardAmount} coins!',
+      ),
+      findsOneWidget,
+    );
+    final rewardedBalance =
+        BettingServer.startingBalance + BettingServer.dailyRewardAmount;
+    expect(await server.balance(session.token), rewardedBalance);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(session: session, server: server),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(await server.balance(session.token), rewardedBalance);
+    expect(
+      find.text(
+        'Daily login reward: +${BettingServer.dailyRewardAmount} coins!',
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('The app stays logged in until the player logs out', (
@@ -231,7 +270,9 @@ void main() {
     await tester.tap(find.text('Select Game'));
     await tester.pumpAndSettle();
 
-    expect(find.text('1000 coins'), findsOneWidget);
+    final loginBalance =
+        BettingServer.startingBalance + BettingServer.dailyRewardAmount;
+    expect(find.text('$loginBalance coins'), findsOneWidget);
 
     final ends = MaterialLocalizations.of(tester.element(find.text('Live Now')))
         .formatTimeOfDay(TimeOfDay.fromDateTime(game.endsAt!));
@@ -254,7 +295,7 @@ void main() {
     await tester.enterText(betField, '5000');
     await tester.pump();
 
-    expect(find.text('You only have 1000 coins'), findsOneWidget);
+    expect(find.text('You only have $loginBalance coins'), findsOneWidget);
     final confirm = find.widgetWithText(FilledButton, 'Confirm Pick');
     expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
 
@@ -282,13 +323,13 @@ void main() {
       find.text('You picked ${game.awayTeam} to win and bet 100 coins!'),
       findsOneWidget,
     );
-    expect(find.text('900 coins'), findsOneWidget);
+    expect(find.text('${loginBalance - 100} coins'), findsOneWidget);
     expect(
       find.textContaining('Bet: 100 coins on ${game.awayTeam}'),
       findsOneWidget,
     );
     final session = await Auth().restore();
-    expect(await backend.balance(session!.token), 900);
+    expect(await backend.balance(session!.token), loginBalance - 100);
   });
 
   testWidgets('Winning bets are paid out when the game ends', (

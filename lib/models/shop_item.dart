@@ -32,9 +32,9 @@ class ShopItem {
   final IconData icon;
 
   String get typeLabel => switch (type) {
-        ShopItemType.background => 'Background',
-        ShopItemType.theme => 'Theme',
-      };
+    ShopItemType.background => 'Background',
+    ShopItemType.theme => 'Theme',
+  };
 }
 
 const shopItems = <ShopItem>[
@@ -57,6 +57,33 @@ const shopItems = <ShopItem>[
     icon: Icons.sports_football,
   ),
   ShopItem(
+    id: 'sunset_drive',
+    name: 'Sunset Drive',
+    description: 'A warm sunset over the field. Greatness starts here.',
+    price: 350,
+    type: ShopItemType.background,
+    color: Color(0xFF9C3D4A),
+    icon: Icons.wb_twilight,
+  ),
+  ShopItem(
+    id: 'snow_game',
+    name: 'Snow Game',
+    description: 'A crisp winter field under falling snow.',
+    price: 450,
+    type: ShopItemType.background,
+    color: Color(0xFF527B9D),
+    icon: Icons.ac_unit,
+  ),
+  ShopItem(
+    id: 'championship',
+    name: 'Championship Night',
+    description: 'A packed championship field beneath the lights.',
+    price: 600,
+    type: ShopItemType.background,
+    color: Color(0xFF512B72),
+    icon: Icons.emoji_events,
+  ),
+  ShopItem(
     id: 'midnight_theme',
     name: 'Midnight Theme',
     description: 'A deep navy look for late games.',
@@ -73,5 +100,32 @@ const shopItems = <ShopItem>[
     type: ShopItemType.theme,
     color: Color(0xFF9B7626),
     icon: Icons.auto_awesome,
+  ),
+  ShopItem(
+    id: 'red_zone_theme',
+    name: 'Red Zone Theme',
+    description: 'Bold crimson colors for every game day.',
+    price: 650,
+    type: ShopItemType.theme,
+    color: Color(0xFFB32635),
+    icon: Icons.flag,
+  ),
+  ShopItem(
+    id: 'arctic_theme',
+    name: 'Arctic Theme',
+    description: 'Cool blue colors with a clean, icy feel.',
+    price: 650,
+    type: ShopItemType.theme,
+    color: Color(0xFF2878A5),
+    icon: Icons.ac_unit,
+  ),
+  ShopItem(
+    id: 'purple_reign_theme',
+    name: 'Purple Reign Theme',
+    description: 'A bold purple palette for your home team.',
+    price: 800,
+    type: ShopItemType.theme,
+    color: Color(0xFF673AB7),
+    icon: Icons.bolt,
   ),
 ];

@@ -29,6 +29,9 @@ class ShopBackground extends StatelessWidget {
   static CustomPainter _painterFor(ShopItem item) => switch (item.id) {
     'stadium_lights' => _StadiumLightsPainter(item.color),
     'gridiron' => _GridironPainter(item.color),
+    'sunset_drive' => _SunsetPainter(item.color),
+    'snow_game' => _SnowPainter(item.color),
+    'championship' => _ChampionshipPainter(item.color),
     _ => _GradientPainter(item.color),
   };
 }
@@ -151,4 +154,60 @@ class _GridironPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GridironPainter old) => old.color != color;
+}
+
+class _SunsetPainter extends _GradientPainter {
+  _SunsetPainter(super.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    super.paint(canvas, size);
+    final sunCenter = Offset(size.width * 0.5, size.height * 0.62);
+    canvas.drawCircle(
+      sunCenter,
+      size.shortestSide * 0.16,
+      Paint()..color = const Color(0xFFFFD180).withValues(alpha: 0.85),
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(0, size.height * 0.72, size.width, size.height * 0.28),
+      Paint()..color = const Color(0xFF263C36).withValues(alpha: 0.85),
+    );
+  }
+}
+
+class _SnowPainter extends _GradientPainter {
+  _SnowPainter(super.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    super.paint(canvas, size);
+    final snow = Paint()..color = Colors.white.withValues(alpha: 0.72);
+    for (var row = 0; row < 9; row++) {
+      for (var column = 0; column < 7; column++) {
+        final x = size.width * ((column * 37 + row * 19) % 100) / 100;
+        final y = size.height * ((row * 23 + column * 11) % 100) / 100;
+        canvas.drawCircle(Offset(x, y), 1.5 + (row % 3) * 0.6, snow);
+      }
+    }
+    canvas.drawRect(
+      Rect.fromLTWH(0, size.height * 0.84, size.width, size.height * 0.16),
+      Paint()..color = const Color(0xFFDCEAF0).withValues(alpha: 0.8),
+    );
+  }
+}
+
+class _ChampionshipPainter extends _StadiumLightsPainter {
+  _ChampionshipPainter(super.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    super.paint(canvas, size);
+    final paint = Paint()
+      ..color = const Color(0xFFFFD54F).withValues(alpha: 0.65);
+    for (var i = 0; i < 24; i++) {
+      final x = size.width * ((i * 41) % 100) / 100;
+      final y = size.height * (0.12 + ((i * 29) % 58) / 100);
+      canvas.drawCircle(Offset(x, y), 1.6 + (i % 3) * 0.6, paint);
+    }
+  }
 }
