@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../data/fake_crowd.dart';
 import '../models/bet.dart';
 import '../models/crowd_stats.dart';
 import '../models/game.dart';
@@ -15,7 +14,7 @@ class PickWinnerScreen extends StatefulWidget {
     super.key,
     required this.game,
     this.initialPick,
-    this.crowd,
+    required this.crowd,
     this.balance = 0,
     this.existingBet,
   });
@@ -25,9 +24,8 @@ class PickWinnerScreen extends StatefulWidget {
   /// The user's previously saved pick for this game, if any.
   final TeamSide? initialPick;
 
-  /// Other users' votes and bets, not counting this user. Defaults to
-  /// [fakeCrowdFor].
-  final CrowdStats? crowd;
+  /// Other users' votes and bets, not counting this user.
+  final CrowdStats crowd;
 
   /// Coins the user can bet.
   final int balance;
@@ -42,7 +40,6 @@ class PickWinnerScreen extends StatefulWidget {
 
 class _PickWinnerScreenState extends State<PickWinnerScreen> {
   late TeamSide? _pick = widget.existingBet?.side ?? widget.initialPick;
-  late final CrowdStats _crowd = widget.crowd ?? fakeCrowdFor(widget.game);
   final _betController = TextEditingController();
 
   bool get _locked => widget.existingBet != null;
@@ -93,7 +90,7 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
     final textTheme = Theme.of(context).textTheme;
     final game = widget.game;
     final bet = _bet;
-    final crowd = _crowd.withUser(pick: _pick, bet: bet);
+    final crowd = widget.crowd.withUser(pick: _pick, bet: bet);
 
     return Scaffold(
       appBar: AppBar(

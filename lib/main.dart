@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'screens/login_screen.dart';
+import 'screens/start_screen.dart';
 
 void main() {
   runApp(const FootballWinnerApp());
@@ -17,7 +17,7 @@ class FootballWinnerApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green.shade800),
       ),
-      home: const LoginScreen(),
+      home: const StartScreen(),
     );
   }
 }

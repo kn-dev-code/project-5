@@ -2,28 +2,30 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../data/fake_crowd.dart';
-import '../data/game_feed.dart';
+import '../data/auth.dart';
+import '../data/backend.dart';
 import '../data/pick_store.dart';
-import '../data/wallet_store.dart';
 import '../models/bet.dart';
 import '../models/crowd_stats.dart';
 import '../models/game.dart';
+import '../server/betting_server.dart';
 import 'pick_winner_screen.dart';
 
 class GameSelectScreen extends StatefulWidget {
   const GameSelectScreen({
     super.key,
-    this.feed,
+    required this.session,
+    this.server,
     this.pickStore,
-    this.wallet,
     this.refreshInterval = const Duration(seconds: 30),
   });
 
-  /// Where games come from. Defaults to the shared [gameFeed].
-  final GameFeed? feed;
+  /// The logged-in player whose coins and bets are shown.
+  final Session session;
+
+  /// Where games, coins and bets come from. Defaults to the shared [backend].
+  final BettingServer? server;
   final PickStore? pickStore;
-  final WalletStore? wallet;
 
   /// How often scores are re-fetched while the screen is open.
   final Duration refreshInterval;
@@ -33,14 +35,17 @@ class GameSelectScreen extends StatefulWidget {
 }
 
 class _GameSelectScreenState extends State<GameSelectScreen> {
-  late final GameFeed _feed = widget.feed ?? gameFeed;
+  late final BettingServer _server = widget.server ?? backend;
   late final PickStore _pickStore = widget.pickStore ?? PickStore();
-  late final WalletStore _wallet = widget.wallet ?? WalletStore();
+  late final String _token = widget.session.token;
   late final Timer _refreshTimer;
 
   List<Game>? _games;
   Map<String, TeamSide> _picks = {};
   Map<String, Bet> _bets = {};
+
+  /// Other players' votes and bets per game, not counting this user.
+  Map<String, CrowdStats> _crowds = {};
   int _balance = 0;
 
   @override
@@ -57,34 +62,34 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
   }
 
   Future<void> _load() async {
-    final games = await _feed.fetchGames();
+    final games = await _server.fetchGames();
     await _update(games, previous: null);
   }
 
   Future<void> _refresh() async {
-    final games = await _feed.fetchGames();
+    final games = await _server.fetchGames();
     await _update(games, previous: _games);
   }
 
-  /// Shows [games], pays out bets on finished games, and tells the user how
-  /// their picks did. [previous] is null on first load.
+  /// Shows [games] and tells the user how their picks did and what the server
+  /// paid out for their bets. [previous] is null on first load.
   Future<void> _update(
     List<Game> games, {
     required List<Game>? previous,
   }) async {
-    final settled = <String, Bet>{
-      for (final game in games) game.id: ?await _wallet.settle(game),
-    };
-    final (picks, bets, balance) = await (
+    final (picks, bets, balance, crowds, settled) = await (
       _pickStore.loadPicks(),
-      _wallet.loadBets(),
-      _wallet.loadBalance(),
+      _server.bets(_token),
+      _server.balance(_token),
+      _loadCrowds(games),
+      _server.takeResults(_token),
     ).wait;
     if (!mounted) return;
     setState(() {
       _games = games;
       _picks = picks;
       _bets = bets;
+      _crowds = crowds;
       _balance = balance;
     });
 
@@ -94,11 +99,15 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     };
     final messages = [
       for (final game in games)
-        if (settled.containsKey(game.id) ||
+        if (settled.contains(game.id) ||
             (game.isFinished &&
                 !wasFinished.contains(game.id) &&
                 picks.containsKey(game.id)))
-          _resultMessage(game, picks[game.id], settled[game.id]),
+          _resultMessage(
+            game,
+            picks[game.id],
+            settled.contains(game.id) ? bets[game.id] : null,
+          ),
     ];
     if (messages.isEmpty) return;
     ScaffoldMessenger.of(context)
@@ -128,8 +137,12 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
         : 'You lost ${bet.amount} coins.';
   }
 
+  Future<Map<String, CrowdStats>> _loadCrowds(List<Game> games) async => {
+    for (final game in games) game.id: await _server.crowd(game, token: _token),
+  };
+
   CrowdStats _crowd(Game game) =>
-      fakeCrowdFor(game).withUser(pick: _picks[game.id], bet: _bets[game.id]);
+      _crowds[game.id]!.withUser(pick: _picks[game.id], bet: _bets[game.id]);
 
   Future<void> _openPick(Game game) async {
     final result = await Navigator.of(context).push<PickResult>(
@@ -137,6 +150,7 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
         builder: (_) => PickWinnerScreen(
           game: game,
           initialPick: _picks[game.id],
+          crowd: _crowds[game.id]!,
           balance: _balance,
           existingBet: _bets[game.id],
         ),
@@ -145,16 +159,26 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     if (result == null) return;
     await _pickStore.savePick(game.id, result.side);
     if (result.bet > 0) {
-      await _wallet.placeBet(game.id, result.side, result.bet);
+      try {
+        await _server.placeBet(_token, game.id, result.side, result.bet);
+      } on BetRejected catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(SnackBar(content: Text(e.message)));
+        }
+      }
     }
-    final (bets, balance) = await (
-      _wallet.loadBets(),
-      _wallet.loadBalance(),
+    final (bets, balance, crowd) = await (
+      _server.bets(_token),
+      _server.balance(_token),
+      _server.crowd(game, token: _token),
     ).wait;
     if (!mounted) return;
     setState(() {
       _picks = {..._picks, game.id: result.side};
       _bets = bets;
+      _crowds = {..._crowds, game.id: crowd};
       _balance = balance;
     });
   }

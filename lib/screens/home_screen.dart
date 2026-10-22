@@ -1,9 +1,26 @@
 import 'package:flutter/material.dart';
 
+import '../data/auth.dart';
 import 'game_select_screen.dart';
+import 'login_screen.dart';
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.session, this.auth});
+
+  final Session session;
+
+  /// Used to log out. Defaults to [Auth] with the shared accounts server.
+  final Auth? auth;
+
+  Future<void> _logOut(BuildContext context) async {
+    final auth = this.auth ?? Auth();
+    await auth.logOut(session);
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => LoginScreen(auth: auth)),
+      (_) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -14,6 +31,13 @@ class HomeScreen extends StatelessWidget {
         title: const Text('Football Winner'),
         backgroundColor: colors.primary,
         foregroundColor: colors.onPrimary,
+        actions: [
+          IconButton(
+            onPressed: () => _logOut(context),
+            icon: const Icon(Icons.logout),
+            tooltip: 'Log Out',
+          ),
+        ],
       ),
       body: SafeArea(
         child: Padding(
@@ -31,10 +55,20 @@ class HomeScreen extends StatelessWidget {
                       fontWeight: FontWeight.bold,
                     ),
               ),
-              const SizedBox(height: 48),
+              const SizedBox(height: 8),
+              Text(
+                'Logged in as ${session.account.username}',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 40),
               FilledButton.icon(
                 onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const GameSelectScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => GameSelectScreen(session: session),
+                  ),
                 ),
                 icon: const Icon(Icons.sports_football),
                 label: const Text('Select Game'),

@@ -4,14 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:footballapp/data/auth.dart';
+import 'package:footballapp/data/backend.dart';
 import 'package:footballapp/data/game_feed.dart';
 import 'package:footballapp/data/pick_store.dart';
-import 'package:footballapp/data/wallet_store.dart';
 import 'package:footballapp/main.dart';
-import 'package:footballapp/models/bet.dart';
 import 'package:footballapp/models/crowd_stats.dart';
 import 'package:footballapp/models/game.dart';
 import 'package:footballapp/screens/game_select_screen.dart';
+import 'package:footballapp/server/account_server.dart';
+import 'package:footballapp/server/betting_server.dart';
+import 'package:footballapp/server/server_storage.dart';
 
 class _ScriptedFeed implements GameFeed {
   _ScriptedFeed(this._responses);
@@ -24,31 +27,101 @@ class _ScriptedFeed implements GameFeed {
       _responses[min(_calls++, _responses.length - 1)];
 }
 
+const _username = 'tester';
+const _password = 'password1';
+
+/// Opens the app and logs in through the login screen with the shared
+/// accounts server, creating the account first if an earlier test hasn't.
+Future<void> _openAppAndLogIn(WidgetTester tester) async {
+  try {
+    await accounts.createAccount(_username, _password);
+  } on AuthException {
+    // An earlier test already created it.
+  }
+  await tester.pumpWidget(const FootballWinnerApp());
+  await tester.pumpAndSettle();
+  await tester.enterText(find.widgetWithText(TextField, 'Username'), _username);
+  await tester.enterText(find.widgetWithText(TextField, 'Password'), _password);
+  await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+  await tester.pumpAndSettle();
+}
+
+/// A betting server that only knows the games in [feed], and a player who is
+/// logged in to it.
+Future<(BettingServer, Session)> _testServer(GameFeed feed) async {
+  final accounts = AccountServer(storage: MemoryStorage(), hashIterations: 1);
+  final token = await accounts.createAccount(_username, _password);
+  final session = Session(
+    token: token,
+    account: await accounts.accountFor(token),
+  );
+  final server = BettingServer(
+    feed: feed,
+    storage: MemoryStorage(),
+    accounts: accounts,
+  );
+  return (server, session);
+}
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('Login screen rejects missing or wrong details', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const FootballWinnerApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+    await tester.pump();
+    expect(find.text('Enter your username and password.'), findsOneWidget);
+
+    await tester.enterText(find.widgetWithText(TextField, 'Username'), 'nope');
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Password'),
+      'wrong-password',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
+    await tester.pumpAndSettle();
+    expect(find.text('Wrong username or password.'), findsOneWidget);
+    expect(find.text('Select Game'), findsNothing);
+  });
 
   testWidgets('Login screen leads to homepage with Select Game and Shop', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const FootballWinnerApp());
+    await _openAppAndLogIn(tester);
 
-    expect(find.widgetWithText(TextField, 'Name'), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'Password'), findsOneWidget);
-
-    await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
-    await tester.pumpAndSettle();
-
+    expect(find.text('Logged in as $_username'), findsOneWidget);
     expect(find.text('Select Game'), findsOneWidget);
     expect(find.text('Shop'), findsOneWidget);
+  });
+
+  testWidgets('The app stays logged in until the player logs out', (
+    WidgetTester tester,
+  ) async {
+    await _openAppAndLogIn(tester);
+
+    // Relaunching skips the login screen.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(const FootballWinnerApp());
+    await tester.pumpAndSettle();
+    expect(find.text('Logged in as $_username'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Log Out'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(FilledButton, 'Log In'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(const FootballWinnerApp());
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(FilledButton, 'Log In'), findsOneWidget);
   });
 
   testWidgets('Select Game lists games and lets the user pick a live winner', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const FootballWinnerApp());
-
-    await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
-    await tester.pumpAndSettle();
+    await _openAppAndLogIn(tester);
     await tester.tap(find.text('Select Game'));
     await tester.pumpAndSettle();
 
@@ -100,15 +173,16 @@ void main() {
       homeScore: 17,
       awayScore: 3,
     );
+    final (server, session) = await _testServer(
+      _ScriptedFeed([
+        [live],
+        [finished],
+      ]),
+    );
 
     await tester.pumpWidget(
       MaterialApp(
-        home: GameSelectScreen(
-          feed: _ScriptedFeed([
-            [live],
-            [finished],
-          ]),
-        ),
+        home: GameSelectScreen(session: session, server: server),
       ),
     );
     await tester.pumpAndSettle();
@@ -127,9 +201,7 @@ void main() {
   testWidgets('Pick screen shows vote percentages and places a bet', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const FootballWinnerApp());
-    await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
-    await tester.pumpAndSettle();
+    await _openAppAndLogIn(tester);
     await tester.tap(find.text('Select Game'));
     await tester.pumpAndSettle();
 
@@ -173,17 +245,14 @@ void main() {
       find.textContaining('Bet: 100 coins on Northgate Knights'),
       findsOneWidget,
     );
-    expect(await WalletStore().loadBalance(), 900);
+    final session = await Auth().restore();
+    expect(await backend.balance(session!.token), 900);
   });
 
   testWidgets('Winning bets are paid out when the game ends', (
     WidgetTester tester,
   ) async {
-    SharedPreferences.setMockInitialValues({
-      'winner_picks': '{"x1":"home"}',
-      'wallet_balance': 900,
-      'wallet_bets': '{"x1":{"side":"home","amount":100,"payout":null}}',
-    });
+    SharedPreferences.setMockInitialValues({'winner_picks': '{"x1":"home"}'});
     const live = Game(
       id: 'x1',
       league: 'Pro Football',
@@ -201,20 +270,19 @@ void main() {
       status: GameStatus.finished,
       homeScore: 7,
     );
-    final payout = WalletStore.payoutFor(
-      finished,
-      const Bet(side: TeamSide.home, amount: 100),
+    final (server, session) = await _testServer(
+      _ScriptedFeed([
+        [live],
+        [live],
+        [finished],
+      ]),
     );
-    expect(payout, greaterThan(100));
+    await server.fetchGames();
+    await server.placeBet(session.token, 'x1', TeamSide.home, 100);
 
     await tester.pumpWidget(
       MaterialApp(
-        home: GameSelectScreen(
-          feed: _ScriptedFeed([
-            [live],
-            [finished],
-          ]),
-        ),
+        home: GameSelectScreen(session: session, server: server),
       ),
     );
     await tester.pumpAndSettle();
@@ -223,12 +291,14 @@ void main() {
     await tester.pump(const Duration(seconds: 30));
     await tester.pump();
 
+    final payout = (await server.bets(session.token))['x1']!.payout!;
+    expect(payout, greaterThan(100));
     expect(find.text('${900 + payout} coins'), findsOneWidget);
     expect(
       find.text('Alpha Aces won! Your pick was right! You won $payout coins.'),
       findsOneWidget,
     );
-    expect(await WalletStore().loadBalance(), 900 + payout);
+    expect(await server.balance(session.token), 900 + payout);
   });
 
   test('Vote percentages add up to 100 and winners split the pool', () {
@@ -253,16 +323,41 @@ void main() {
     expect(games.where((g) => g.isLive), isEmpty);
   });
 
-  testWidgets('Create account screen asks for username and password twice', (
+  testWidgets('Create account screen checks the form and logs in', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(const FootballWinnerApp());
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text("Don't have an account? Create one"));
     await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(TextField, 'Username'), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'Password'), findsOneWidget);
-    expect(find.widgetWithText(TextField, 'Confirm Password'), findsOneWidget);
+    final username = find.widgetWithText(TextField, 'Username');
+    final password = find.widgetWithText(TextField, 'Password');
+    final confirm = find.widgetWithText(TextField, 'Confirm Password');
+    final create = find.widgetWithText(FilledButton, 'Create Account');
+
+    await tester.enterText(username, 'new_player');
+    await tester.enterText(password, 'password1');
+    await tester.enterText(confirm, 'password2');
+    await tester.tap(create);
+    await tester.pump();
+    expect(find.text("Passwords don't match."), findsOneWidget);
+
+    await tester.enterText(password, 'short');
+    await tester.enterText(confirm, 'short');
+    await tester.tap(create);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Passwords must be at least 8 characters.'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(password, 'password1');
+    await tester.enterText(confirm, 'password1');
+    await tester.tap(create);
+    await tester.pumpAndSettle();
+    expect(find.text('Logged in as new_player'), findsOneWidget);
+    expect(find.byType(BackButton), findsNothing);
   });
 }
