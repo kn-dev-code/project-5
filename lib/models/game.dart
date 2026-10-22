@@ -36,6 +36,18 @@ class Game {
 
   bool get isLive => status == GameStatus.live;
 
+  /// Whether a football game is still before halftime according to its feed.
+  bool get isBeforeHalftime {
+    if (!isLive) return false;
+    if (quarter == 1) return true;
+    if (quarter != 2 || clock == null) return false;
+    final parts = clock!.split(':');
+    if (parts.length != 2) return false;
+    final minutes = int.tryParse(parts[0]);
+    final seconds = int.tryParse(parts[1]);
+    return minutes != null && seconds != null && minutes * 60 + seconds > 0;
+  }
+
   bool get isFinished => status == GameStatus.finished;
 
   /// The side that won, or null if the game isn't over or ended in a tie.

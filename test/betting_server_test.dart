@@ -142,6 +142,56 @@ void main() {
       expect(paid, 10 + 20 + 37);
     });
 
+    test('cash out returns half the stake once before halftime', () async {
+      final beforeHalftime = Game(
+        id: 'x1',
+        league: 'Pro Football',
+        homeTeam: 'Alpha Aces',
+        awayTeam: 'Beta Bulls',
+        status: GameStatus.live,
+        quarter: 2,
+        clock: '3:00',
+      );
+      final halftime = Game(
+        id: 'x1',
+        league: 'Pro Football',
+        homeTeam: 'Alpha Aces',
+        awayTeam: 'Beta Bulls',
+        status: GameStatus.live,
+        quarter: 2,
+        clock: '0:00',
+      );
+      final server = BettingServer(
+        feed: _ScriptedFeed([
+          [beforeHalftime],
+          [halftime],
+        ]),
+        storage: MemoryStorage(),
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('cashout', 'password1');
+      await server.fetchGames();
+      await server.placeBet(me, 'x1', TeamSide.home, 101);
+
+      expect(await server.cashOutHalf(me, 'x1'), 50);
+      expect(await server.balance(me), 949);
+      final bet = (await server.bets(me))['x1']!;
+      expect(bet.amount, 51);
+      expect(bet.cashOutAmount, 50);
+      await expectLater(
+        server.cashOutHalf(me, 'x1'),
+        throwsA(isA<BetRejected>()),
+      );
+
+      await server.fetchGames();
+      await expectLater(
+        server.cashOutHalf(me, 'x1'),
+        throwsA(isA<BetRejected>()),
+      );
+      expect(await server.balance(me), 949);
+    });
+
     test('rejects requests without a valid session', () async {
       final server = BettingServer(
         feed: _ScriptedFeed([

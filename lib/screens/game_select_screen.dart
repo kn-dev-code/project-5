@@ -183,6 +183,31 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     });
   }
 
+  Future<void> _cashOutHalf(Game game) async {
+    try {
+      final refund = await _server.cashOutHalf(_token, game.id);
+      final (bets, balance, crowd) = await (
+        _server.bets(_token),
+        _server.balance(_token),
+        _server.crowd(game, token: _token),
+      ).wait;
+      if (!mounted) return;
+      setState(() {
+        _bets = bets;
+        _balance = balance;
+        _crowds = {..._crowds, game.id: crowd};
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$refund coins returned to your balance.')),
+      );
+    } on BetRejected catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -254,7 +279,17 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     pick: _picks[game.id],
     bet: _bets[game.id],
     onTap: onTap,
+    onCashOut: _canCashOut(game, _bets[game.id])
+        ? () => _cashOutHalf(game)
+        : null,
   );
+
+  static bool _canCashOut(Game game, Bet? bet) =>
+      game.isBeforeHalftime &&
+      bet != null &&
+      !bet.isSettled &&
+      bet.cashOutAmount == 0 &&
+      bet.amount >= 2;
 }
 
 class _SectionHeader extends StatelessWidget {
@@ -282,6 +317,7 @@ class _GameCard extends StatelessWidget {
     this.pick,
     this.bet,
     this.onTap,
+    this.onCashOut,
   });
 
   final Game game;
@@ -296,6 +332,8 @@ class _GameCard extends StatelessWidget {
 
   /// Only live games can be bet on, so only they get a tap handler.
   final VoidCallback? onTap;
+
+  final VoidCallback? onCashOut;
 
   @override
   Widget build(BuildContext context) {
@@ -371,6 +409,19 @@ class _GameCard extends StatelessWidget {
                       color: colors.primary,
                     ),
                   ),
+                  if (onCashOut != null) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: onCashOut,
+                        icon: const Icon(Icons.savings_outlined),
+                        label: Text(
+                          'Cash out half (${bet!.amount ~/ 2} coins)',
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ],
             ),
@@ -393,13 +444,18 @@ class _GameCard extends StatelessWidget {
 
   String _betLabel(Bet bet) {
     final staked = 'Bet: ${bet.amount} coins on ${game.teamName(bet.side)}';
+    final returned = bet.cashOutAmount > 0
+        ? ' (${bet.cashOutAmount} coins returned before halftime)'
+        : '';
     final payout = bet.payout;
     if (payout == null) {
       final ifWon = crowd.winningPayout(bet.side, bet.amount);
-      return '$staked (pays $ifWon if it wins)';
+      return '$staked$returned (pays $ifWon if it wins)';
     }
-    if (game.winner == null) return '$staked - refunded';
-    return payout > 0 ? '$staked - won $payout' : '$staked - lost';
+    if (game.winner == null) return '$staked$returned - refunded';
+    return payout > 0
+        ? '$staked$returned - won $payout'
+        : '$staked$returned - lost';
   }
 }
 

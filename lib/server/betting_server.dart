@@ -124,6 +124,36 @@ class BettingServer {
     await _save(ledger);
   }
 
+  /// Returns half of the player's stake once, while the game is before
+  /// halftime. The remaining stake stays in the pool and can still win.
+  Future<int> cashOutHalf(String token, String gameId) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    final game = _games[gameId];
+    if (game?.isBeforeHalftime != true) {
+      throw const BetRejected('Cash out is only available before halftime.');
+    }
+    final bet = ledger.bets[gameId]?[player];
+    if (bet == null || bet.isSettled) {
+      throw const BetRejected('You have no active bet to cash out.');
+    }
+    if (bet.cashOutAmount > 0) {
+      throw const BetRejected('You already cashed out this bet.');
+    }
+    final refund = bet.amount ~/ 2;
+    if (refund == 0) {
+      throw const BetRejected('Your bet is too small to cash out half.');
+    }
+    ledger.bets[gameId]![player] = Bet(
+      side: bet.side,
+      amount: bet.amount - refund,
+      cashOutAmount: refund,
+    );
+    ledger.balances[player] = ledger.balance(player) + refund;
+    await _save(ledger);
+    return refund;
+  }
+
   /// Ids of games where the player's bet was settled since the last call.
   Future<List<String>> takeResults(String token) async {
     final player = await _playerFor(token);
@@ -170,7 +200,12 @@ class BettingServer {
     final payouts = splitPool(bets, game.winner);
     for (final MapEntry(key: player, value: bet) in bets.entries) {
       final payout = payouts[player]!;
-      bets[player] = Bet(side: bet.side, amount: bet.amount, payout: payout);
+      bets[player] = Bet(
+        side: bet.side,
+        amount: bet.amount,
+        payout: payout,
+        cashOutAmount: bet.cashOutAmount,
+      );
       ledger.balances[player] = ledger.balance(player) + payout;
       if (!isBot(player)) {
         ledger.results.putIfAbsent(player, () => []).add(game.id);
