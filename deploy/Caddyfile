@@ -1,0 +1,5 @@
+{$DOMAIN} {
+	# Game lists are repetitive JSON, so this cuts outgoing traffic a lot.
+	encode gzip
+	reverse_proxy server:8080
+}

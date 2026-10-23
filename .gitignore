@@ -49,3 +49,4 @@ app.*.map.json
 
 # Football Winner server data when run locally
 /server/data/
+/deploy/.env

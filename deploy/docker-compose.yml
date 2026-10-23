@@ -1,0 +1,41 @@
+# Runs the Football Winner server behind Caddy, which gets a free https
+# certificate for DOMAIN and compresses replies. Set DOMAIN in deploy/.env
+# (see .env.example), then from this folder run:
+#
+#   docker compose up -d --build
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    environment:
+      ALLOWED_ORIGIN: "*"
+    volumes:
+      - football-data:/data
+    # Only Caddy talks to the server; nothing outside reaches port 8080.
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  # Accounts, coins and bets. Back this up.
+  football-data:
+  # Caddy's certificates, kept so it doesn't request new ones on every restart.
+  caddy-data:
+  caddy-config:

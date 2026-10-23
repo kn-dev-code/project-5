@@ -44,6 +44,9 @@ docker run -p 8080:8080 -v football-data:/data football-server
 
 Data is kept in JSON files, so run a single instance only.
 
+For a step-by-step guide to running it on Google Cloud's free e2-micro machine
+with https, see [deploy/README.md](deploy/README.md).
+
 ## Running the app
 
 Point the app at a server when building or running it:
