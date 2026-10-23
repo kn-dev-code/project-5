@@ -14,6 +14,7 @@ import '../data/backend.dart';
 import '../data/errors.dart';
 import '../data/pick_store.dart';
 import '../data/sound_effects.dart';
+import '../widgets/game_time.dart';
 import '../widgets/score_effects.dart';
 import '../widgets/shop_background.dart';
 import 'notifications_screen.dart';
@@ -547,10 +548,14 @@ class _GameCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        game.endsAt == null || game.isFinished
-                            ? game.league
-                            : '${game.league} · ends '
-                                  '${_formatTime(context, game.endsAt!)}',
+                        [
+                          game.league,
+                          if (game.kickoff case final kickoff?)
+                            formatGameDay(context, kickoff),
+                          if (game.endsAt case final endsAt?
+                              when !game.isFinished)
+                            'ends ${formatGameTime(context, endsAt)}',
+                        ].join(' · '),
                         style: textTheme.labelMedium?.copyWith(
                           color: colors.onSurfaceVariant,
                         ),
@@ -795,7 +800,9 @@ class _StatusChip extends StatelessWidget {
         colors.onError,
       ),
       GameStatus.upcoming => (
-        game.kickoff == null ? 'Upcoming' : _formatTime(context, game.kickoff!),
+        game.kickoff == null
+            ? 'Upcoming'
+            : formatGameTime(context, game.kickoff!),
         colors.secondaryContainer,
         colors.onSecondaryContainer,
       ),
@@ -820,7 +827,3 @@ class _StatusChip extends StatelessWidget {
     );
   }
 }
-
-String _formatTime(BuildContext context, DateTime time) =>
-    MaterialLocalizations.of(context)
-        .formatTimeOfDay(TimeOfDay.fromDateTime(time));

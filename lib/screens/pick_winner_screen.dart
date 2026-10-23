@@ -7,6 +7,7 @@ import 'package:football_core/models/team_record.dart';
 import 'package:football_core/server/payouts.dart';
 
 import '../data/sound_effects.dart';
+import '../widgets/game_time.dart';
 
 /// What the user chose: the side they picked, how many coins they bet on it
 /// (0 only when they already had a bet), and the winner's score range they bet on, if any.
@@ -206,6 +207,14 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                       style: textTheme.titleMedium?.copyWith(
                         color: colors.error,
                       ),
+                    )
+                  else if (game.kickoff case final kickoff?
+                      when game.status == GameStatus.upcoming)
+                    Text(
+                      'Kickoff ${formatGameDay(context, kickoff)} at '
+                      '${formatGameTime(context, kickoff)}',
+                      textAlign: TextAlign.center,
+                      style: textTheme.titleMedium,
                     ),
                   if (!_locked) ...[
                     const SizedBox(height: 4),

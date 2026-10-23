@@ -319,6 +319,10 @@ void main() {
     final record = game.awayRecord!;
     final bonus = underdogMultiplier(record);
     await _openAppAndLogIn(tester);
+    // When this test runs first, let the first-login reward message go so
+    // the bet confirmation can show.
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Select Game'));
     await tester.pumpAndSettle();
 
