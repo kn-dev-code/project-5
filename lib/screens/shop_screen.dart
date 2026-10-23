@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:football_core/api/betting_api.dart';
 
-import '../data/auth.dart';
 import '../data/app_theme.dart';
+import '../data/auth.dart';
 import '../data/backend.dart';
 import '../data/errors.dart';
+import '../data/sound_effects.dart';
 import '../models/shop_item.dart';
 
 class ShopScreen extends StatefulWidget {
@@ -83,6 +84,7 @@ class _ShopScreenState extends State<ShopScreen> {
         _balance = balance;
         _owned = owned;
       });
+      sfx.play(Sound.purchase);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${item.name} added to your inventory.')),
       );
@@ -90,6 +92,7 @@ class _ShopScreenState extends State<ShopScreen> {
       final message = userMessage(error);
       if (message == null) rethrow;
       if (!mounted) return;
+      sfx.play(Sound.error);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -105,6 +108,7 @@ class _ShopScreenState extends State<ShopScreen> {
       if (!mounted) return;
       appTheme.activate(item);
       setState(() => _activeThemeId = item.id);
+      sfx.play(Sound.select);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${item.name} is now active.')),
       );
@@ -112,6 +116,7 @@ class _ShopScreenState extends State<ShopScreen> {
       final message = userMessage(error);
       if (message == null) rethrow;
       if (!mounted) return;
+      sfx.play(Sound.error);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -130,6 +135,7 @@ class _ShopScreenState extends State<ShopScreen> {
       if (!mounted) return;
       activateBackground(newId);
       setState(() => _activeBackgroundId = newId);
+      sfx.play(Sound.select);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -143,6 +149,7 @@ class _ShopScreenState extends State<ShopScreen> {
       final message = userMessage(error);
       if (message == null) rethrow;
       if (!mounted) return;
+      sfx.play(Sound.error);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -170,7 +177,8 @@ class _ShopScreenState extends State<ShopScreen> {
               ),
             ),
           ],
-          bottom: const TabBar(
+          bottom: TabBar(
+            onTap: (_) => sfx.play(Sound.tap),
             tabs: [
               Tab(icon: Icon(Icons.storefront), text: 'Shop'),
               Tab(icon: Icon(Icons.inventory_2), text: 'Inventory'),

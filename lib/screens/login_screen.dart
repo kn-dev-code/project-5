@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/auth.dart';
 import '../data/errors.dart';
+import '../data/sound_effects.dart';
 import 'create_account_screen.dart';
 import 'home_screen.dart';
 
@@ -51,6 +52,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } catch (e) {
       final message = userMessage(e);
       if (message == null) rethrow;
+      sfx.play(Sound.error);
       if (mounted) {
         setState(() {
           _busy = false;
@@ -106,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 24),
                 FilledButton(
-                  onPressed: _busy ? null : _logIn,
+                  onPressed: _busy ? null : sfx.withSound(_logIn),
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
@@ -116,9 +118,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 TextButton(
                   onPressed: _busy
                       ? null
-                      : () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => CreateAccountScreen(auth: _auth),
+                      : sfx.withSound(
+                          () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => CreateAccountScreen(auth: _auth),
+                            ),
                           ),
                         ),
                   child: const Text("Don't have an account? Create one"),

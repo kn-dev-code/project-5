@@ -3,6 +3,7 @@ import 'package:football_core/server/account_server.dart';
 
 import '../data/auth.dart';
 import '../data/errors.dart';
+import '../data/sound_effects.dart';
 import 'home_screen.dart';
 
 class CreateAccountScreen extends StatefulWidget {
@@ -62,6 +63,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     } catch (e) {
       final message = userMessage(e);
       if (message == null) rethrow;
+      sfx.play(Sound.error);
       if (mounted) {
         setState(() {
           _busy = false;
@@ -134,7 +136,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                 ],
                 const SizedBox(height: 24),
                 FilledButton(
-                  onPressed: _busy ? null : _create,
+                  onPressed: _busy ? null : sfx.withSound(_create),
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),

@@ -5,10 +5,11 @@ import 'package:football_core/api/betting_api.dart';
 import 'package:football_core/models/game_notification.dart';
 import 'package:football_core/server/betting_server.dart';
 
-import '../data/auth.dart';
 import '../data/app_theme.dart';
+import '../data/auth.dart';
 import '../data/backend.dart';
 import '../data/errors.dart';
+import '../data/sound_effects.dart';
 import '../models/shop_item.dart';
 import '../widgets/shop_background.dart';
 import 'game_select_screen.dart';
@@ -106,6 +107,7 @@ class _HomeScreenState extends State<HomeScreen> {
           : notifications.first.id;
     });
     if (fresh.isNotEmpty) {
+      sfx.play(Sound.notify);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(notificationSummary(fresh))));
@@ -171,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _loadingReward = false;
       });
       if (awardOnLogin && canClaim) {
+        sfx.play(Sound.coins);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -199,17 +202,20 @@ class _HomeScreenState extends State<HomeScreen> {
         _canClaimDailyReward = false;
         _rewardError = null;
       });
+      sfx.play(Sound.coins);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('You claimed 250 free coins!')),
       );
     } on BetRejected catch (error) {
       if (!mounted) return;
+      sfx.play(Sound.error);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error.message)),
       );
       await _refreshRewards();
     } catch (_) {
       if (!mounted) return;
+      sfx.play(Sound.error);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not claim reward. Try again.')),
       );
@@ -267,12 +273,13 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: colors.primary,
         foregroundColor: colors.onPrimary,
         actions: [
+          const _MuteButton(),
           NotificationBell(
             unread: _unreadNotifications,
             onPressed: _openNotifications,
           ),
           IconButton(
-            onPressed: () => _logOut(context),
+            onPressed: sfx.withSound(() => _logOut(context)),
             icon: const Icon(Icons.logout),
             tooltip: 'Log Out',
           ),
@@ -327,7 +334,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   tooltip: 'Refresh balance and reward',
                                   onPressed: _loadingReward || _claimingReward
                                       ? null
-                                      : _refreshRewards,
+                                      : sfx.withSound(_refreshRewards),
                                   icon: const Icon(Icons.refresh),
                                 ),
                               ],
@@ -385,7 +392,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 24),
                     FilledButton.icon(
-                      onPressed: _openGames,
+                      onPressed: sfx.withSound(_openGames),
                       icon: const Icon(Icons.sports_football),
                       label: const Text('Select Game'),
                       style: FilledButton.styleFrom(
@@ -394,7 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(height: 16),
                     OutlinedButton.icon(
-                      onPressed: _openShop,
+                      onPressed: sfx.withSound(_openShop),
                       icon: const Icon(Icons.storefront),
                       label: const Text('Shop'),
                       style: OutlinedButton.styleFrom(
@@ -410,4 +417,22 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+/// Turns sound effects on and off. The choice is remembered on the device.
+class _MuteButton extends StatelessWidget {
+  const _MuteButton();
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+    valueListenable: sfx.muted,
+    builder: (context, muted, _) => IconButton(
+      tooltip: muted ? 'Turn sounds on' : 'Turn sounds off',
+      icon: Icon(muted ? Icons.volume_off : Icons.volume_up),
+      onPressed: () async {
+        await sfx.setMuted(!muted);
+        sfx.play(Sound.select);
+      },
+    ),
+  );
 }

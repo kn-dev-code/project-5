@@ -13,6 +13,7 @@ import '../data/auth.dart';
 import '../data/backend.dart';
 import '../data/errors.dart';
 import '../data/pick_store.dart';
+import '../data/sound_effects.dart';
 import '../widgets/score_effects.dart';
 import '../widgets/shop_background.dart';
 import 'notifications_screen.dart';
@@ -109,7 +110,9 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     }
   }
 
+  /// Shows a refusal or failure, with the error sound.
   void _showMessage(String message) {
+    sfx.play(Sound.error);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -187,8 +190,22 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
             'This bailout comes once a day.',
     ];
     if (messages.isEmpty) return;
+    sfx.play(_updateSound(settled, bets, bailout));
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(messages.join('\n'))));
+  }
+
+  /// One sound for everything an update reports, the best news winning:
+  /// coins for a win or a bailout, a sad slide for a loss, otherwise a ding.
+  static Sound _updateSound(
+    List<String> settled,
+    Map<String, Bet> bets,
+    int bailout,
+  ) {
+    final payouts = [for (final id in settled) ?bets[id]?.payout];
+    if (bailout > 0 || payouts.any((p) => p > 0)) return Sound.coins;
+    if (payouts.isNotEmpty) return Sound.lose;
+    return Sound.notify;
   }
 
   static String _resultMessage(Game game, TeamSide? pick, Bet? bet) {
@@ -248,6 +265,7 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
           result.bet,
           scoreRange: result.scoreRange,
         );
+        sfx.play(Sound.bet);
       } catch (e) {
         final message = userMessage(e);
         if (message == null) rethrow;
@@ -311,6 +329,7 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
         _balance = balance;
         _crowds = {..._crowds, game.id: crowd};
       });
+      sfx.play(Sound.coins);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$refund coins returned to your balance.')),
       );
@@ -415,7 +434,7 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     crowd: _crowd(game),
     pick: _picks[game.id],
     bet: _bets[game.id],
-    onTap: game.isBettingOpen ? () => _openPick(game) : null,
+    onTap: game.isBettingOpen ? sfx.withSound(() => _openPick(game)) : null,
     onCashOut: _canCashOut(game, _bets[game.id])
         ? () => _cashOutHalf(game)
         : null,
@@ -446,7 +465,7 @@ class _LoadError extends StatelessWidget {
           Text(message, textAlign: TextAlign.center),
           const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed: onRetry,
+            onPressed: sfx.withSound(onRetry),
             icon: const Icon(Icons.refresh),
             label: const Text('Try again'),
           ),

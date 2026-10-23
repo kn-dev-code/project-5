@@ -6,6 +6,8 @@ import 'package:football_core/models/game.dart';
 import 'package:football_core/models/team_record.dart';
 import 'package:football_core/server/payouts.dart';
 
+import '../data/sound_effects.dart';
+
 /// What the user chose: the side they picked, how many coins they bet on it
 /// (0 only when they already had a bet), and the winner's score range they bet on, if any.
 typedef PickResult = ({TeamSide side, int bet, ScoreRange? scoreRange});
@@ -138,6 +140,8 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
     final pick = _pick;
     if (pick == null || !_canConfirm) return;
     final bet = _locked ? 0 : _betAmount;
+    // A new bet gets its sound once the server accepts it.
+    if (bet == 0) sfx.play(Sound.tap);
     final scoreRange = _scoreRange;
 
     final team = widget.game.teamName(pick);
@@ -242,7 +246,10 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                       selected: _pick == side,
                       onTap: _locked
                           ? null
-                          : () => setState(() => _pick = side),
+                          : sfx.withSound(
+                              () => setState(() => _pick = side),
+                              Sound.select,
+                            ),
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -314,8 +321,10 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                         'the score lands outside it.',
                       ),
                       value: _useScoreRange,
-                      onChanged: (value) =>
-                          setState(() => _useScoreRange = value),
+                      onChanged: (value) {
+                        sfx.play(Sound.select);
+                        setState(() => _useScoreRange = value);
+                      },
                     ),
                     if (_useScoreRange) ...[
                       const SizedBox(height: 8),

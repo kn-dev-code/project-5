@@ -15,6 +15,7 @@ import 'package:footballapp/data/app_theme.dart';
 import 'package:footballapp/data/auth.dart';
 import 'package:footballapp/data/backend.dart';
 import 'package:footballapp/data/pick_store.dart';
+import 'package:footballapp/data/sound_effects.dart';
 import 'package:footballapp/main.dart';
 import 'package:footballapp/screens/game_select_screen.dart';
 import 'package:footballapp/screens/home_screen.dart';
@@ -74,9 +75,8 @@ Future<Game> _underdogAwayGame() async =>
 
 /// The card for [game] in the game list; the end time is unique to each game.
 Finder _cardFor(WidgetTester tester, Game game) {
-  final ends = MaterialLocalizations.of(
-    tester.element(find.text('Live Now')),
-  ).formatTimeOfDay(TimeOfDay.fromDateTime(game.endsAt!));
+  final ends = MaterialLocalizations.of(tester.element(find.text('Live Now')))
+      .formatTimeOfDay(TimeOfDay.fromDateTime(game.endsAt!));
   return find.textContaining('· ends $ends');
 }
 
@@ -97,8 +97,23 @@ Future<(BettingServer, Session)> _testServer(GameFeed feed) async {
   return (server, session);
 }
 
+/// Records sounds instead of playing them; tests have no audio.
+class _RecordingSoundPlayer implements SoundPlayer {
+  final played = <Sound>[];
+
+  @override
+  Future<void> play(Sound sound) async => played.add(sound);
+}
+
+final _sounds = _RecordingSoundPlayer();
+
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    sfx.player = _sounds;
+    sfx.muted.value = false;
+    _sounds.played.clear();
+  });
   tearDown(() => appBackground.value = null);
 
   testWidgets('Login screen rejects missing or wrong details', (
@@ -126,6 +141,11 @@ void main() {
     WidgetTester tester,
   ) async {
     await _openAppAndLogIn(tester);
+
+    // The app opens with its jingle, then the login button taps and the
+    // first-login reward pays out.
+    expect(_sounds.played.first, Sound.startup);
+    expect(_sounds.played, containsAllInOrder([Sound.tap, Sound.coins]));
 
     expect(find.text('Logged in as $_username'), findsOneWidget);
     expect(find.text('Select Game'), findsOneWidget);
@@ -235,6 +255,7 @@ void main() {
       find.text('You picked ${game.awayTeam} to win and bet 10 coins!'),
       findsOneWidget,
     );
+    expect(_sounds.played, containsAllInOrder([Sound.select, Sound.bet]));
     // Back on the game list, with the pick on the game's card.
     expect(find.text('Select Game'), findsOneWidget);
     expect(find.text('Your pick: ${game.awayTeam}'), findsOneWidget);
@@ -690,5 +711,89 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Logged in as new_player'), findsOneWidget);
     expect(find.byType(BackButton), findsNothing);
+  });
+
+  testWidgets('Muting sounds silences them and is remembered', (
+    WidgetTester tester,
+  ) async {
+    final (server, session) = await _testServer(_ScriptedFeed([const []]));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeScreen(session: session, server: server),
+      ),
+    );
+    await tester.pumpAndSettle();
+    _sounds.played.clear();
+
+    await tester.tap(find.byTooltip('Turn sounds off'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Turn sounds on'), findsOneWidget);
+    expect(_sounds.played, isEmpty);
+    expect(
+      (await SharedPreferences.getInstance()).getBool('sounds_muted'),
+      isTrue,
+    );
+
+    await tester.tap(find.byTooltip('Refresh balance and reward'));
+    await tester.pumpAndSettle();
+    expect(_sounds.played, isEmpty);
+
+    // A fresh start reads the saved setting.
+    sfx.muted.value = false;
+    await sfx.loadSettings();
+    expect(sfx.muted.value, isTrue);
+
+    await tester.tap(find.byTooltip('Turn sounds on'));
+    await tester.pumpAndSettle();
+    expect(_sounds.played, [Sound.select]);
+  });
+
+  testWidgets('A bet refused by the server plays the error sound', (
+    WidgetTester tester,
+  ) async {
+    Game live(int quarter) => Game(
+      id: 'x1',
+      league: 'Pro Football',
+      homeTeam: 'Alpha Aces',
+      awayTeam: 'Beta Bulls',
+      status: GameStatus.live,
+      quarter: quarter,
+      clock: '5:00',
+    );
+    final (server, session) = await _testServer(
+      _ScriptedFeed([
+        [live(1)],
+        [live(2)],
+      ]),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GameSelectScreen(session: session, server: server),
+      ),
+    );
+    await tester.pumpAndSettle();
+    _sounds.played.clear();
+
+    await tester.tap(find.text('Alpha Aces').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'Alpha Aces'));
+    await tester.pump();
+    final betField = find.byType(TextField);
+    await tester.scrollUntilVisible(
+      betField,
+      100,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.enterText(betField, '10');
+    await tester.pump();
+
+    // The first quarter ends while the player is still choosing.
+    await server.fetchGames();
+    await tester.tap(find.widgetWithText(FilledButton, 'Confirm Pick'));
+    await tester.pumpAndSettle();
+
+    expect(_sounds.played, [Sound.tap, Sound.select, Sound.error]);
+    expect(find.textContaining('Betting is closed'), findsOneWidget);
+    expect(await server.bets(session.token), isEmpty);
   });
 }

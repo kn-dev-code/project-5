@@ -4,6 +4,7 @@ import 'package:football_core/models/game_notification.dart';
 
 import '../data/auth.dart';
 import '../data/errors.dart';
+import '../data/sound_effects.dart';
 
 /// App bar button that opens the notifications list, with a badge counting
 /// unread ones.
@@ -19,7 +20,7 @@ class NotificationBell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => IconButton(
-    onPressed: onPressed,
+    onPressed: sfx.withSound(onPressed),
     tooltip: 'Notifications',
     icon: Badge(
       isLabelVisible: unread > 0,

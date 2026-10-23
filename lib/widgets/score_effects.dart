@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:football_core/models/game.dart';
 
+import '../data/sound_effects.dart';
+
 enum ScoreEffectKind {
   /// The team the user backed scored.
   fanfare,
@@ -90,6 +92,7 @@ class _ScoreEffectState extends State<ScoreEffect>
   void initState() {
     super.initState();
     _fanfare ? HapticFeedback.mediumImpact() : HapticFeedback.lightImpact();
+    sfx.play(_fanfare ? Sound.fanfare : Sound.lose);
     _controller.addStatusListener((status) {
       if (status == AnimationStatus.completed && mounted) widget.onDone();
     });
