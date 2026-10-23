@@ -58,7 +58,9 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
 
   /// Other players' votes and bets per game, not counting this user.
   Map<String, CrowdStats> _crowds = {};
-  int _balance = 0;
+
+  /// Null until the first load, so the app bar never shows a made-up 0.
+  int? _balance;
   int _unreadNotifications = 0;
 
   /// Newest notification id already accounted for, so only notifications that
@@ -235,9 +237,14 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
         : 'You lost ${bet.amount} coins.';
   }
 
-  Future<Map<String, CrowdStats>> _loadCrowds(List<Game> games) async => {
-    for (final game in games) game.id: await _server.crowd(game, token: _token),
-  };
+  /// Every game's crowd stats, requested all at once; one at a time takes
+  /// seconds with a full slate of live games.
+  Future<Map<String, CrowdStats>> _loadCrowds(List<Game> games) async {
+    final crowds = await Future.wait([
+      for (final game in games) _server.crowd(game, token: _token),
+    ]);
+    return {for (final (i, game) in games.indexed) game.id: crowds[i]};
+  }
 
   CrowdStats _crowd(Game game) =>
       _crowds[game.id]!.withUser(pick: _picks[game.id], bet: _bets[game.id]);
@@ -249,7 +256,7 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
           game: game,
           initialPick: _picks[game.id],
           crowd: _crowds[game.id]!,
-          balance: _balance,
+          balance: _balance ?? 0,
           existingBet: _bets[game.id],
         ),
       ),
@@ -362,7 +369,7 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
               children: [
                 const Icon(Icons.monetization_on),
                 const SizedBox(width: 4),
-                Text('$_balance coins'),
+                Text(_balance == null ? '… coins' : '$_balance coins'),
               ],
             ),
           ),
