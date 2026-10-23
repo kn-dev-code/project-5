@@ -1,0 +1,9 @@
+**/.dart_tool/
+**/build/
+server/data/
+android/
+ios/
+linux/
+macos/
+web/
+windows/

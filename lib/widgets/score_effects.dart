@@ -2,8 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
-import '../models/game.dart';
+import 'package:football_core/models/game.dart';
 
 enum ScoreEffectKind {
   /// The team the user backed scored.

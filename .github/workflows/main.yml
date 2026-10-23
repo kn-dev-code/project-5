@@ -50,8 +50,22 @@ jobs:
       - name: ✅ Run tests
         run: flutter test --coverage
 
+      - name: ✅ Test shared package
+        working-directory: packages/football_core
+        run: |
+          dart pub get
+          dart test
+
+      - name: ✅ Test server
+        working-directory: server
+        run: |
+          dart pub get
+          dart test
+
+      # Set the API_URL repository variable to the server's https address.
+      # Without it the APK runs its own on-device server with made-up games.
       - name: 🏗️ Build APKs
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release --no-tree-shake-icons --dart-define=API_URL=${{ vars.API_URL }}
 
       - name: 📦 Prepare artifacts
         run: |

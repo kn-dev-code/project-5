@@ -1,29 +1,45 @@
+import 'package:football_core/api/betting_api.dart';
+import 'package:football_core/api/http_api.dart';
+import 'package:football_core/feeds/game_feed.dart';
+import 'package:football_core/server/account_server.dart';
+import 'package:football_core/server/betting_server.dart';
+import 'package:football_core/server/server_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../server/account_server.dart';
-import '../server/betting_server.dart';
-import '../server/server_storage.dart';
-import 'game_feed.dart';
+/// Address of the Football Winner server (see `server/`), set when building
+/// with `--dart-define=API_URL=https://...`.
+///
+/// Without it the app runs the servers itself, on the device, with made-up
+/// games. Tests rely on that, and it lets the app work without a server.
+const apiUrl = String.fromEnvironment('API_URL');
 
-// TODO: replace these with clients for the real servers. The app only talks
-// to them through their public methods, sending the session token, so the
-// clients can keep the same methods.
+/// Whether the app talks to the real server with live games.
+bool get usesLiveServer => apiUrl.isNotEmpty;
 
-/// Shared accounts server. For now it runs inside the app and keeps its data
-/// on the device.
-final AccountServer accounts = AccountServer(
-  storage: PrefsStorage('server_accounts'),
-);
+final ApiConnection? _connection = usesLiveServer
+    ? ApiConnection(Uri.parse(apiUrl))
+    : null;
 
-/// Shared betting server. For now it runs inside the app and keeps its data on
-/// the device.
-final BettingServer backend = BettingServer(
-  feed: gameFeed,
-  storage: PrefsStorage('server_ledger'),
-  accounts: accounts,
-);
+/// Made-up games for the on-device server when there's no [apiUrl].
+final GameFeed gameFeed = FakeGameFeed();
 
-/// Saves a server's data in shared preferences under [key].
+/// Shared accounts service.
+final AccountApi accounts = switch (_connection) {
+  final connection? => HttpAccountApi(connection),
+  null => AccountServer(storage: PrefsStorage('server_accounts')),
+};
+
+/// Shared betting service.
+final BettingApi backend = switch (_connection) {
+  final connection? => HttpBettingApi(connection),
+  null => BettingServer(
+    feed: gameFeed,
+    storage: PrefsStorage('server_ledger'),
+    accounts: accounts as AccountServer,
+  ),
+};
+
+/// Saves an on-device server's data in shared preferences under [key].
 class PrefsStorage implements ServerStorage {
   PrefsStorage(this.key);
 

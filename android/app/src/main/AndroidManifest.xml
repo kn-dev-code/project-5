@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Talks to the Football Winner server for games, coins and bets. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="footballapp"
         android:name="${applicationName}"

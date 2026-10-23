@@ -1,31 +1,47 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:football_core/api/betting_api.dart';
+import 'package:football_core/models/game_notification.dart';
+import 'package:football_core/server/betting_server.dart';
 
 import '../data/auth.dart';
 import '../data/app_theme.dart';
 import '../data/backend.dart';
+import '../data/errors.dart';
 import '../models/shop_item.dart';
-import '../server/betting_server.dart';
 import '../widgets/shop_background.dart';
 import 'game_select_screen.dart';
 import 'login_screen.dart';
+import 'notifications_screen.dart';
 import 'shop_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.session, this.auth, this.server});
+  const HomeScreen({
+    super.key,
+    required this.session,
+    this.auth,
+    this.server,
+    this.notificationInterval = const Duration(seconds: 30),
+  });
 
   final Session session;
 
   /// Used to log out. Defaults to [Auth] with the shared accounts server.
   final Auth? auth;
 
-  final BettingServer? server;
+  final BettingApi? server;
+
+  /// How often games are checked for new notifications while this screen is
+  /// open.
+  final Duration notificationInterval;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late final BettingServer _server = widget.server ?? backend;
+  late final BettingApi _server = widget.server ?? backend;
 
   int? _balance;
   bool _canClaimDailyReward = false;
@@ -33,11 +49,77 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _claimingReward = false;
   String? _rewardError;
 
+  late final Timer _notificationTimer;
+  int _unreadNotifications = 0;
+
+  /// Newest notification id already accounted for, so only notifications that
+  /// arrive while the screen is open pop up. Null before the first load.
+  int? _lastNotificationId;
+
   @override
   void initState() {
     super.initState();
     _loadTheme();
     _refreshRewards(awardOnLogin: true);
+    _loadNotifications();
+    _notificationTimer = Timer.periodic(
+      widget.notificationInterval,
+      (_) => _checkGames(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _notificationTimer.cancel();
+    super.dispose();
+  }
+
+  /// Lets the server see score changes, which is when it sends halftime and
+  /// result notifications, then shows any new ones.
+  Future<void> _checkGames() async {
+    try {
+      await _server.fetchGames();
+    } catch (_) {
+      // Try again on the next tick.
+    }
+    await _loadNotifications();
+  }
+
+  Future<void> _loadNotifications() async {
+    final List<GameNotification> notifications;
+    try {
+      notifications = await _server.notifications(widget.session.token);
+    } catch (e) {
+      // Shown on the next successful check instead.
+      if (userMessage(e) == null) rethrow;
+      return;
+    }
+    if (!mounted) return;
+    final lastSeen = _lastNotificationId;
+    final fresh = lastSeen == null
+        ? const <Never>[]
+        : notifications.reversed.where((n) => n.id > lastSeen).toList();
+    setState(() {
+      _unreadNotifications = notifications.where((n) => !n.read).length;
+      _lastNotificationId = notifications.isEmpty
+          ? lastSeen ?? -1
+          : notifications.first.id;
+    });
+    if (fresh.isNotEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(notificationSummary(fresh))));
+    }
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            NotificationsScreen(session: widget.session, server: _server),
+      ),
+    );
+    if (mounted) await _loadNotifications();
   }
 
   Future<void> _loadTheme() async {
@@ -140,10 +222,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openGames() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => GameSelectScreen(session: widget.session),
+        builder: (_) =>
+            GameSelectScreen(session: widget.session, server: _server),
       ),
     );
-    if (mounted) await _refreshRewards();
+    if (mounted) {
+      await _refreshRewards();
+      await _loadNotifications();
+    }
   }
 
   Future<void> _openShop() async {
@@ -181,6 +267,10 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: colors.primary,
         foregroundColor: colors.onPrimary,
         actions: [
+          NotificationBell(
+            unread: _unreadNotifications,
+            onPressed: _openNotifications,
+          ),
           IconButton(
             onPressed: () => _logOut(context),
             icon: const Icon(Icons.logout),

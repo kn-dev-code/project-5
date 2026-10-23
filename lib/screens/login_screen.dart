@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/auth.dart';
-import '../server/account_server.dart';
+import '../data/errors.dart';
 import 'create_account_screen.dart';
 import 'home_screen.dart';
 
@@ -48,11 +48,13 @@ class _LoginScreenState extends State<LoginScreen> {
           builder: (_) => HomeScreen(session: session, auth: _auth),
         ),
       );
-    } on AuthException catch (e) {
+    } catch (e) {
+      final message = userMessage(e);
+      if (message == null) rethrow;
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = e.message;
+          _error = message;
         });
       }
     }

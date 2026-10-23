@@ -22,6 +22,32 @@ class Game {
     this.awayRecord,
   });
 
+  factory Game.fromJson(Map<String, dynamic> json) {
+    DateTime? time(String key) => switch (json[key]) {
+      final String value => DateTime.parse(value),
+      _ => null,
+    };
+    TeamRecord? record(String key) => switch (json[key]) {
+      final Map<String, dynamic> value => TeamRecord.fromJson(value),
+      _ => null,
+    };
+    return Game(
+      id: json['id'] as String,
+      league: json['league'] as String,
+      homeTeam: json['homeTeam'] as String,
+      awayTeam: json['awayTeam'] as String,
+      status: GameStatus.values.byName(json['status'] as String),
+      homeScore: json['homeScore'] as int? ?? 0,
+      awayScore: json['awayScore'] as int? ?? 0,
+      quarter: json['quarter'] as int?,
+      clock: json['clock'] as String?,
+      kickoff: time('kickoff'),
+      endsAt: time('endsAt'),
+      homeRecord: record('homeRecord'),
+      awayRecord: record('awayRecord'),
+    );
+  }
+
   final String id;
   final String league;
   final String homeTeam;
@@ -64,6 +90,12 @@ class Game {
     return minutes != null && seconds != null && minutes * 60 + seconds > 0;
   }
 
+  /// Whether a live game has reached halftime or gone past it.
+  bool get isHalftimeOrLater {
+    if (!isLive || quarter == null) return false;
+    return quarter! >= 3 || (quarter == 2 && !isBeforeHalftime);
+  }
+
   bool get isFinished => status == GameStatus.finished;
 
   /// The side that won, or null if the game isn't over or ended in a tie.
@@ -71,6 +103,14 @@ class Game {
     if (!isFinished || homeScore == awayScore) return null;
     return homeScore > awayScore ? TeamSide.home : TeamSide.away;
   }
+
+  int score(TeamSide side) => side == TeamSide.home ? homeScore : awayScore;
+
+  /// The winner's final score, or null if there is no winner yet.
+  int? get winningScore => switch (winner) {
+    final side? => score(side),
+    null => null,
+  };
 
   /// Quarter and clock for display, e.g. 'Q2 8:42' or 'OT 3:10'.
   String? get gameClock {
@@ -80,4 +120,20 @@ class Game {
   }
 
   String teamName(TeamSide side) => side == TeamSide.home ? homeTeam : awayTeam;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'league': league,
+    'homeTeam': homeTeam,
+    'awayTeam': awayTeam,
+    'status': status.name,
+    'homeScore': homeScore,
+    'awayScore': awayScore,
+    'quarter': quarter,
+    'clock': clock,
+    'kickoff': kickoff?.toUtc().toIso8601String(),
+    'endsAt': endsAt?.toUtc().toIso8601String(),
+    'homeRecord': homeRecord?.toJson(),
+    'awayRecord': awayRecord?.toJson(),
+  };
 }

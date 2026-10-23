@@ -1,8 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:footballapp/server/account_server.dart';
-import 'package:footballapp/server/password_hash.dart';
-import 'package:footballapp/server/server_storage.dart';
+import 'package:football_core/server/account_server.dart';
+import 'package:football_core/server/password_hash.dart';
+import 'package:football_core/server/server_storage.dart';
 
 String _hex(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();

@@ -1,7 +1,7 @@
+import 'package:football_core/api/betting_api.dart';
+import 'package:football_core/models/account.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/account.dart';
-import '../server/account_server.dart';
 import 'backend.dart';
 
 /// A logged-in player. [token] goes with every request to the servers.
@@ -16,11 +16,11 @@ class Session {
 /// they stay logged in between app launches. Server errors come through as
 /// [AuthException].
 class Auth {
-  Auth({AccountServer? server}) : _server = server ?? accounts;
+  Auth({AccountApi? server}) : _server = server ?? accounts;
 
   static const _tokenKey = 'session_token';
 
-  final AccountServer _server;
+  final AccountApi _server;
 
   /// The session saved on this device, or null if there isn't a valid one.
   Future<Session?> restore() async {

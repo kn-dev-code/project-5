@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:football_core/models/shop_catalog.dart';
 
-enum ShopItemType { background, theme }
+export 'package:football_core/models/shop_catalog.dart' show ShopItemType;
+
+// Prices and types must match the server's [shopListings]; a test checks this.
 
 const startingTheme = ShopItem(
   id: 'basic_theme',

@@ -15,6 +15,15 @@ class CrowdStats {
     this.awayBettors = 0,
   });
 
+  factory CrowdStats.fromJson(Map<String, dynamic> json) => CrowdStats(
+    homeVotes: json['homeVotes'] as int,
+    awayVotes: json['awayVotes'] as int,
+    homePool: json['homePool'] as int,
+    awayPool: json['awayPool'] as int,
+    homeBettors: json['homeBettors'] as int? ?? 0,
+    awayBettors: json['awayBettors'] as int? ?? 0,
+  );
+
   final int homeVotes;
   final int awayVotes;
 
@@ -25,6 +34,15 @@ class CrowdStats {
   /// How many players have bet on each side.
   final int homeBettors;
   final int awayBettors;
+
+  Map<String, Object?> toJson() => {
+    'homeVotes': homeVotes,
+    'awayVotes': awayVotes,
+    'homePool': homePool,
+    'awayPool': awayPool,
+    'homeBettors': homeBettors,
+    'awayBettors': awayBettors,
+  };
 
   int votes(TeamSide side) => side == TeamSide.home ? homeVotes : awayVotes;
 

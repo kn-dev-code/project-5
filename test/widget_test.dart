@@ -2,26 +2,25 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
+import 'package:football_core/feeds/fake_games.dart';
+import 'package:football_core/feeds/game_feed.dart';
+import 'package:football_core/models/bet.dart';
+import 'package:football_core/models/crowd_stats.dart';
+import 'package:football_core/models/game.dart';
+import 'package:football_core/server/account_server.dart';
+import 'package:football_core/server/betting_server.dart';
+import 'package:football_core/server/payouts.dart';
+import 'package:football_core/server/server_storage.dart';
 import 'package:footballapp/data/app_theme.dart';
 import 'package:footballapp/data/auth.dart';
 import 'package:footballapp/data/backend.dart';
-import 'package:footballapp/data/fake_games.dart';
-import 'package:footballapp/data/game_feed.dart';
 import 'package:footballapp/data/pick_store.dart';
 import 'package:footballapp/main.dart';
-import 'package:footballapp/models/bet.dart';
-import 'package:footballapp/models/crowd_stats.dart';
-import 'package:footballapp/models/game.dart';
 import 'package:footballapp/screens/game_select_screen.dart';
 import 'package:footballapp/screens/home_screen.dart';
 import 'package:footballapp/screens/shop_screen.dart';
-import 'package:footballapp/server/account_server.dart';
-import 'package:footballapp/server/betting_server.dart';
-import 'package:footballapp/server/payouts.dart';
-import 'package:footballapp/server/server_storage.dart';
 import 'package:footballapp/widgets/score_effects.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _ScriptedFeed implements GameFeed {
   _ScriptedFeed(this._responses);
@@ -42,15 +41,20 @@ const _password = 'password1';
 
 /// Opens the app and logs in through the login screen with the shared
 /// accounts server, creating the account first if an earlier test hasn't.
-Future<void> _openAppAndLogIn(WidgetTester tester) async {
+/// Tests that bet on the shared server's games log in as their own [username]
+/// so their bets don't clash.
+Future<void> _openAppAndLogIn(
+  WidgetTester tester, {
+  String username = _username,
+}) async {
   try {
-    await accounts.createAccount(_username, _password);
+    await accounts.createAccount(username, _password);
   } on AuthException {
     // An earlier test already created it.
   }
   await tester.pumpWidget(const FootballWinnerApp());
   await tester.pumpAndSettle();
-  await tester.enterText(find.widgetWithText(TextField, 'Username'), _username);
+  await tester.enterText(find.widgetWithText(TextField, 'Username'), username);
   await tester.enterText(find.widgetWithText(TextField, 'Password'), _password);
   await tester.tap(find.widgetWithText(FilledButton, 'Log In'));
   await tester.pumpAndSettle();
@@ -182,7 +186,10 @@ void main() {
     WidgetTester tester,
   ) async {
     final game = await _liveGame();
-    await _openAppAndLogIn(tester);
+    await _openAppAndLogIn(tester, username: 'picker');
+    // Let the first-login reward message go so later ones can show.
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Select Game'));
     await tester.pumpAndSettle();
 
@@ -199,15 +206,26 @@ void main() {
 
     await tester.tap(find.widgetWithText(ListTile, game.awayTeam));
     await tester.pump();
+    // Picking a team isn't enough; every pick needs a bet.
+    expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
+
+    final betField = find.byType(TextField);
+    await tester.scrollUntilVisible(
+      betField,
+      100,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.enterText(betField, '10');
+    await tester.pump();
     await tester.tap(confirm);
     await tester.pumpAndSettle();
 
-    expect(find.text('You picked ${game.awayTeam} to win!'), findsOneWidget);
-    expect(find.text('Live Now'), findsOneWidget);
     expect(
-      find.text('Your pick: ${game.awayTeam} (tap to change)'),
+      find.text('You picked ${game.awayTeam} to win and bet 10 coins!'),
       findsOneWidget,
     );
+    expect(find.text('Live Now'), findsOneWidget);
+    expect(find.text('Your pick: ${game.awayTeam}'), findsOneWidget);
     expect(await PickStore().loadPicks(), {game.id: TeamSide.away});
   });
 
@@ -382,6 +400,58 @@ void main() {
       findsOneWidget,
     );
     expect(await server.balance(session.token), 900 + payout);
+  });
+
+  testWidgets('Halftime scores pop up and collect under the bell', (
+    WidgetTester tester,
+  ) async {
+    Game live(int quarter, {int home = 0}) => Game(
+      id: 'x1',
+      league: 'Pro Football',
+      homeTeam: 'Alpha Aces',
+      awayTeam: 'Beta Bulls',
+      status: GameStatus.live,
+      homeScore: home,
+      quarter: quarter,
+      clock: '10:00',
+    );
+    final (server, session) = await _testServer(
+      _ScriptedFeed([
+        [live(1)],
+        [live(1)],
+        [live(3, home: 7)],
+      ]),
+    );
+    await server.fetchGames();
+    await server.placeBet(session.token, 'x1', TeamSide.home, 100);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GameSelectScreen(session: session, server: server),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(Badge), findsOneWidget);
+    expect(find.text('1'), findsNothing);
+
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pump();
+    expect(
+      find.text(
+        'Halftime: Alpha Aces 7 - 0 Beta Bulls. '
+        'Your 100-coin bet on Alpha Aces: Alpha Aces leads by 7.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('1'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Notifications'));
+    await tester.pumpAndSettle();
+    expect(find.text('Halftime: Alpha Aces 7 - 0 Beta Bulls'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsNothing);
+    expect((await server.notifications(session.token)).single.read, isTrue);
   });
 
   testWidgets('Owned backgrounds can be used and removed from the inventory', (

@@ -13,11 +13,8 @@ abstract class GameFeed {
   Future<List<Game>> fetchGamesById(Iterable<String> ids);
 }
 
-/// Shared feed used by the app so game progress survives leaving the screen.
-// TODO: swap for a real live-scores feed.
-final GameFeed gameFeed = FakeGameFeed();
-
-/// Simulates a never-ending schedule of games: one kicks off every
+/// Made-up games for tests and offline play; live games come from
+/// `EspnGameFeed`. Simulates a never-ending schedule of games: one kicks off every
 /// [fakeKickoffInterval] and expires [fakeGameLength] later with a winner.
 ///
 /// Each game's teams, score, clock and season records depend only on its

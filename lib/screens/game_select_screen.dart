@@ -1,18 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:football_core/api/betting_api.dart';
+import 'package:football_core/models/bet.dart';
+import 'package:football_core/models/crowd_stats.dart';
+import 'package:football_core/models/game.dart';
+import 'package:football_core/models/game_notification.dart';
+import 'package:football_core/models/team_record.dart';
+import 'package:football_core/server/payouts.dart';
 
 import '../data/auth.dart';
 import '../data/backend.dart';
+import '../data/errors.dart';
 import '../data/pick_store.dart';
-import '../models/bet.dart';
-import '../models/crowd_stats.dart';
-import '../models/game.dart';
-import '../models/team_record.dart';
-import '../server/betting_server.dart';
-import '../server/payouts.dart';
 import '../widgets/score_effects.dart';
 import '../widgets/shop_background.dart';
+import 'notifications_screen.dart';
 import 'pick_winner_screen.dart';
 
 class GameSelectScreen extends StatefulWidget {
@@ -28,7 +31,7 @@ class GameSelectScreen extends StatefulWidget {
   final Session session;
 
   /// Where games, coins and bets come from. Defaults to the shared [backend].
-  final BettingServer? server;
+  final BettingApi? server;
   final PickStore? pickStore;
 
   /// How often scores are re-fetched while the screen is open.
@@ -39,18 +42,26 @@ class GameSelectScreen extends StatefulWidget {
 }
 
 class _GameSelectScreenState extends State<GameSelectScreen> {
-  late final BettingServer _server = widget.server ?? backend;
+  late final BettingApi _server = widget.server ?? backend;
   late final PickStore _pickStore = widget.pickStore ?? PickStore();
   late final String _token = widget.session.token;
   late final Timer _refreshTimer;
 
   List<Game>? _games;
+
+  /// Why the games couldn't be loaded, shown until a retry works.
+  String? _loadError;
   Map<String, TeamSide> _picks = {};
   Map<String, Bet> _bets = {};
 
   /// Other players' votes and bets per game, not counting this user.
   Map<String, CrowdStats> _crowds = {};
   int _balance = 0;
+  int _unreadNotifications = 0;
+
+  /// Newest notification id already accounted for, so only notifications that
+  /// arrive while the screen is open pop up. Null before the first load.
+  int? _lastNotificationId;
 
   /// Scoring effects currently playing, keyed by a unique id.
   final Map<int, ScoreEvent> _effects = {};
@@ -73,13 +84,35 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
   }
 
   Future<void> _load() async {
-    final games = await _server.fetchGames();
-    await _update(games, previous: null);
+    try {
+      final games = await _server.fetchGames();
+      await _update(games, previous: null);
+    } catch (e) {
+      final message = userMessage(e);
+      if (message == null) rethrow;
+      if (mounted) setState(() => _loadError = message);
+    }
   }
 
-  Future<void> _refresh() async {
-    final games = await _server.fetchGames();
-    await _update(games, previous: _games);
+  /// Fetches games again. Failed automatic refreshes are skipped quietly,
+  /// since the next one may work; when the player pulls to refresh, they're
+  /// told why nothing changed.
+  Future<void> _refresh({bool userAsked = false}) async {
+    if (_games == null) return _load();
+    try {
+      final games = await _server.fetchGames();
+      await _update(games, previous: _games);
+    } catch (e) {
+      final message = userMessage(e);
+      if (message == null) rethrow;
+      if (userAsked && mounted) _showMessage(message);
+    }
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// Shows [games] and tells the user how their picks did and what the server
@@ -88,14 +121,26 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     List<Game> games, {
     required List<Game>? previous,
   }) async {
-    final (picks, bets, balance, crowds, settled) = await (
+    // Settles first (the caller already fetched games), so a bailout only
+    // happens once the player's last bet is decided.
+    final bailout = await _server.claimBailoutIfBroke(_token);
+    final (picks, bets, balance, crowds, settled, notifications) = await (
       _pickStore.loadPicks(),
       _server.bets(_token),
       _server.balance(_token),
       _loadCrowds(games),
       _server.takeResults(_token),
+      _server.notifications(_token),
     ).wait;
     if (!mounted) return;
+    // Results already get their own message below, so only halftime updates
+    // pop up here.
+    final lastSeen = _lastNotificationId;
+    final halftimes = lastSeen == null
+        ? const <GameNotification>[]
+        : notifications.reversed.where(
+            (n) => n.id > lastSeen && n.kind == GameNotificationKind.halftime,
+          );
     final scored = previous == null
         ? const <ScoreEvent>[]
         : scoreEvents(previous, games, {
@@ -104,10 +149,15 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
           });
     setState(() {
       _games = games;
+      _loadError = null;
       _picks = picks;
       _bets = bets;
       _crowds = crowds;
       _balance = balance;
+      _unreadNotifications = notifications.where((n) => !n.read).length;
+      _lastNotificationId = notifications.isEmpty
+          ? lastSeen ?? -1
+          : notifications.first.id;
       for (final event in scored) {
         _effects[_nextEffectId++] = event;
       }
@@ -131,6 +181,10 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
             picks[game.id],
             settled.contains(game.id) ? bets[game.id] : null,
           ),
+      if (halftimes.isNotEmpty) notificationSummary(halftimes),
+      if (bailout > 0)
+        "You're out of coins, so here are $bailout to keep playing. "
+            'This bailout comes once a day.',
     ];
     if (messages.isEmpty) return;
     ScaffoldMessenger.of(context)
@@ -143,9 +197,12 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     if (winner == null) {
       result = '${game.homeTeam} vs ${game.awayTeam} ended in a tie.';
     } else {
-      final outcome = winner == (bet?.side ?? pick)
-          ? 'Your pick was right!'
-          : 'Your pick missed.';
+      final range = bet?.scoreRange;
+      final outcome = winner != (bet?.side ?? pick)
+          ? 'Your pick missed.'
+          : range != null && !range.contains(game.score(winner))
+          ? 'Your pick was right, but the score missed your $range range.'
+          : 'Your pick was right!';
       result = '${game.teamName(winner)} won! $outcome';
     }
     if (bet == null) return result;
@@ -180,23 +237,38 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
       ),
     );
     if (result == null) return;
-    await _pickStore.savePick(game.id, result.side);
+    // A pick always comes with a bet, so it only counts if the bet goes
+    // through. With an existing bet [result.bet] is 0 and the pick is unchanged.
     if (result.bet > 0) {
       try {
-        await _server.placeBet(_token, game.id, result.side, result.bet);
-      } on BetRejected catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-            ..hideCurrentSnackBar()
-            ..showSnackBar(SnackBar(content: Text(e.message)));
-        }
+        await _server.placeBet(
+          _token,
+          game.id,
+          result.side,
+          result.bet,
+          scoreRange: result.scoreRange,
+        );
+      } catch (e) {
+        final message = userMessage(e);
+        if (message == null) rethrow;
+        if (mounted) _showMessage(message);
+        return;
       }
     }
-    final (bets, balance, crowd) = await (
-      _server.bets(_token),
-      _server.balance(_token),
-      _server.crowd(game, token: _token),
-    ).wait;
+    await _pickStore.savePick(game.id, result.side);
+    final Map<String, Bet> bets;
+    final int balance;
+    final CrowdStats crowd;
+    try {
+      (bets, balance, crowd) = await (
+        _server.bets(_token),
+        _server.balance(_token),
+        _server.crowd(game, token: _token),
+      ).wait;
+    } on ParallelWaitError {
+      // The bet went through; the next refresh will show it.
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _picks = {..._picks, game.id: result.side};
@@ -204,6 +276,25 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
       _crowds = {..._crowds, game.id: crowd};
       _balance = balance;
     });
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            NotificationsScreen(session: widget.session, server: _server),
+      ),
+    );
+    try {
+      final notifications = await _server.notifications(_token);
+      if (!mounted) return;
+      setState(
+        () => _unreadNotifications = notifications.where((n) => !n.read).length,
+      );
+    } catch (e) {
+      // The next refresh updates the count.
+      if (userMessage(e) == null) rethrow;
+    }
   }
 
   Future<void> _cashOutHalf(Game game) async {
@@ -223,10 +314,10 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$refund coins returned to your balance.')),
       );
-    } on BetRejected catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      final message = userMessage(e);
+      if (message == null) rethrow;
+      if (mounted) _showMessage(message);
     }
   }
 
@@ -241,6 +332,10 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
         backgroundColor: colors.primary,
         foregroundColor: colors.onPrimary,
         actions: [
+          NotificationBell(
+            unread: _unreadNotifications,
+            onPressed: _openNotifications,
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Row(
@@ -259,9 +354,13 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
           ShopBackground(
             child: SafeArea(
               child: allGames == null
-                  ? const Center(child: CircularProgressIndicator())
+                  ? Center(
+                      child: _loadError == null
+                          ? const CircularProgressIndicator()
+                          : _LoadError(message: _loadError!, onRetry: _load),
+                    )
                   : RefreshIndicator(
-                      onRefresh: _refresh,
+                      onRefresh: () => _refresh(userAsked: true),
                       child: _buildList(allGames),
                     ),
             ),
@@ -328,6 +427,33 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
       !bet.isSettled &&
       bet.cashOutAmount == 0 &&
       bet.amount >= 2;
+}
+
+class _LoadError extends StatelessWidget {
+  const _LoadError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(24),
+    child: BackgroundPanel(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(message, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Try again'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _SectionHeader extends StatelessWidget {
@@ -492,7 +618,9 @@ class _GameCard extends StatelessWidget {
   }
 
   String _betLabel(Bet bet) {
-    final staked = 'Bet: ${bet.amount} coins on ${game.teamName(bet.side)}';
+    final range = bet.scoreRange == null ? '' : ' scoring ${bet.scoreRange}';
+    final staked =
+        'Bet: ${bet.amount} coins on ${game.teamName(bet.side)}$range';
     final returned = bet.cashOutAmount > 0
         ? ' (${bet.cashOutAmount} coins returned before halftime)'
         : '';
@@ -500,9 +628,10 @@ class _GameCard extends StatelessWidget {
     if (payout == null) {
       final ifWon = applyMultiplier(
         crowd.winningPayout(bet.side, bet.amount),
-        bet.multiplier,
+        totalMultiplier(bet),
       );
-      final bonus = bet.multiplier > 1 ? ' with ${bet.multiplier}x bonus' : '';
+      final multiplier = totalMultiplier(bet);
+      final bonus = multiplier > 1 ? ' with ${multiplier}x bonus' : '';
       return '$staked$returned (pays $ifWon$bonus if it wins)';
     }
     if (game.winner == null) return '$staked$returned - refunded';

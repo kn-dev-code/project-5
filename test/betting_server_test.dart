@@ -1,15 +1,15 @@
 import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:footballapp/data/game_feed.dart';
-import 'package:footballapp/models/bet.dart';
-import 'package:footballapp/models/game.dart';
-import 'package:footballapp/models/team_record.dart';
-import 'package:footballapp/server/account_server.dart';
-import 'package:footballapp/server/betting_server.dart';
-import 'package:footballapp/server/payouts.dart';
-import 'package:footballapp/server/server_storage.dart';
+import 'package:football_core/feeds/game_feed.dart';
+import 'package:football_core/models/bet.dart';
+import 'package:football_core/models/game.dart';
+import 'package:football_core/models/game_notification.dart';
+import 'package:football_core/models/team_record.dart';
+import 'package:football_core/server/account_server.dart';
+import 'package:football_core/server/betting_server.dart';
+import 'package:football_core/server/payouts.dart';
+import 'package:football_core/server/server_storage.dart';
 
 class _ScriptedFeed implements GameFeed {
   _ScriptedFeed(this._responses);
@@ -70,6 +70,16 @@ void main() {
       };
       expect(splitPool(bets, null), {'a': 100, 'b': 50});
       expect(splitPool(bets, TeamSide.away), {'a': 100, 'b': 50});
+    });
+  });
+
+  group('scoreRangeMultiplier', () {
+    test('adds 0.5x per point narrower than the widest range', () {
+      expect(scoreRangeMultiplier(null), 1.0);
+      expect(scoreRangeMultiplier(const ScoreRange(20, 28)), 1.0);
+      expect(scoreRangeMultiplier(const ScoreRange(20, 27)), 1.5);
+      expect(scoreRangeMultiplier(const ScoreRange(20, 24)), 3.0);
+      expect(scoreRangeMultiplier(const ScoreRange(21, 21)), 5.0);
     });
   });
 
@@ -221,6 +231,181 @@ void main() {
       expect((await server.bets(me))['x1']!.payout, 400);
       expect(await server.balance(me), 1300);
       expect(await server.balance(you), 900);
+    });
+
+    test('score range bets win only inside the range, with a bonus', () async {
+      final server = BettingServer(
+        feed: _ScriptedFeed([
+          [_game(GameStatus.live)],
+          [_game(GameStatus.finished, home: 24, away: 10)],
+        ]),
+        storage: MemoryStorage(),
+        accounts: accounts,
+        botCount: 0,
+      );
+      final hit = await accounts.createAccount('hit', 'password1');
+      final miss = await accounts.createAccount('miss', 'password1');
+      final loser = await accounts.createAccount('loser', 'password1');
+      await server.fetchGames();
+      await server.placeBet(
+        hit,
+        'x1',
+        TeamSide.home,
+        100,
+        scoreRange: const ScoreRange(21, 25),
+      );
+      await server.placeBet(
+        miss,
+        'x1',
+        TeamSide.home,
+        100,
+        scoreRange: const ScoreRange(28, 30),
+      );
+      await server.placeBet(loser, 'x1', TeamSide.away, 100);
+      expect((await server.bets(hit))['x1']!.scoreRange.toString(), '21-25');
+
+      await server.fetchGames();
+      // The whole 300 pool goes to the only winning bet, times 3.0x for a
+      // range 4 points wide.
+      expect((await server.bets(hit))['x1']!.payout, 900);
+      expect((await server.bets(miss))['x1']!.payout, 0);
+      expect((await server.bets(loser))['x1']!.payout, 0);
+      expect(await server.balance(miss), 900);
+    });
+
+    test('notifies bettors of the halftime score and the result', () async {
+      Game live(int quarter, String clock, {int home = 0, int away = 0}) =>
+          Game(
+            id: 'x1',
+            league: 'Pro Football',
+            homeTeam: 'Alpha Aces',
+            awayTeam: 'Beta Bulls',
+            status: GameStatus.live,
+            homeScore: home,
+            awayScore: away,
+            quarter: quarter,
+            clock: clock,
+          );
+      final server = BettingServer(
+        feed: _ScriptedFeed([
+          [live(1, '9:00')],
+          [live(2, '0:00', home: 14, away: 10)],
+          [live(3, '12:00', home: 21, away: 10)],
+          [_game(GameStatus.finished, home: 24, away: 17)],
+        ]),
+        storage: MemoryStorage(),
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('alice', 'password1');
+      final you = await accounts.createAccount('bob', 'password1');
+      final idle = await accounts.createAccount('carol', 'password1');
+      await server.fetchGames();
+      await server.placeBet(
+        me,
+        'x1',
+        TeamSide.home,
+        100,
+        scoreRange: const ScoreRange(28, 30),
+      );
+      await server.placeBet(you, 'x1', TeamSide.away, 100);
+      // Someone has to win, or every stake is refunded.
+      final fan = await accounts.createAccount('dave', 'password1');
+      await server.placeBet(fan, 'x1', TeamSide.home, 100);
+      expect(await server.notifications(me), isEmpty);
+
+      await server.fetchGames();
+      await server.fetchGames();
+      final halftime = await server.notifications(you);
+      expect(halftime, hasLength(1));
+      expect(halftime.single.kind, GameNotificationKind.halftime);
+      expect(halftime.single.title, 'Halftime: Alpha Aces 14 - 10 Beta Bulls');
+      expect(
+        halftime.single.body,
+        'Your 100-coin bet on Beta Bulls: Beta Bulls trails by 4.',
+      );
+      expect(
+        (await server.notifications(me)).single.body,
+        'Your 100-coin bet on Alpha Aces: Alpha Aces leads by 4. '
+        'Alpha Aces has 14 points; your range is 28-30.',
+      );
+
+      await server.fetchGames();
+      final mine = await server.notifications(me);
+      expect(mine.map((n) => n.kind), [
+        GameNotificationKind.result,
+        GameNotificationKind.halftime,
+      ]);
+      expect(mine.first.title, 'Alpha Aces beat Beta Bulls 24-17');
+      expect(
+        mine.first.body,
+        'Your pick was right, but 24 points missed your 28-30 range. '
+        'You lost 100 coins.',
+      );
+      expect(
+        (await server.notifications(fan)).first.body,
+        'You won 300 coins on your 100-coin bet.',
+      );
+      expect(await server.notifications(idle), isEmpty);
+
+      expect(mine.every((n) => !n.read), isTrue);
+      await server.markNotificationsRead(me);
+      expect((await server.notifications(me)).every((n) => n.read), isTrue);
+      expect((await server.notifications(you)).every((n) => !n.read), isTrue);
+    });
+
+    test('bails out a broke player once a day', () async {
+      final server = BettingServer(
+        feed: _ScriptedFeed([
+          [_game(GameStatus.live)],
+          [_game(GameStatus.finished, away: 7)],
+        ]),
+        storage: MemoryStorage(),
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('broke', 'password1');
+      final you = await accounts.createAccount('rich', 'password1');
+      await server.fetchGames();
+      expect(await server.claimBailoutIfBroke(me), 0);
+
+      await server.placeBet(me, 'x1', TeamSide.home, 1000);
+      await server.placeBet(you, 'x1', TeamSide.away, 10);
+      // Out of coins, but the bet could still win.
+      expect(await server.claimBailoutIfBroke(me), 0);
+
+      await server.fetchGames();
+      expect(await server.balance(me), 0);
+      expect(await server.claimBailoutIfBroke(me), BettingServer.bailoutAmount);
+      expect(await server.balance(me), BettingServer.bailoutAmount);
+      expect(await server.claimBailoutIfBroke(you), 0);
+    });
+
+    test('rejects score ranges wider than the maximum', () async {
+      final server = BettingServer(
+        feed: _ScriptedFeed([
+          [_game(GameStatus.live)],
+        ]),
+        storage: MemoryStorage(),
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('wide', 'password1');
+      await server.fetchGames();
+      for (final range in const [ScoreRange(10, 19), ScoreRange(20, 10)]) {
+        await expectLater(
+          server.placeBet(me, 'x1', TeamSide.home, 10, scoreRange: range),
+          throwsA(isA<BetRejected>()),
+        );
+      }
+      expect(await server.balance(me), 1000);
+      await server.placeBet(
+        me,
+        'x1',
+        TeamSide.home,
+        10,
+        scoreRange: const ScoreRange(10, 18),
+      );
     });
 
     test(

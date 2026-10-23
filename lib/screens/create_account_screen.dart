@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:football_core/server/account_server.dart';
 
 import '../data/auth.dart';
-import '../server/account_server.dart';
+import '../data/errors.dart';
 import 'home_screen.dart';
 
 class CreateAccountScreen extends StatefulWidget {
@@ -58,11 +59,13 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         ),
         (_) => false,
       );
-    } on AuthException catch (e) {
+    } catch (e) {
+      final message = userMessage(e);
+      if (message == null) rethrow;
       if (mounted) {
         setState(() {
           _busy = false;
-          _error = e.message;
+          _error = message;
         });
       }
     }

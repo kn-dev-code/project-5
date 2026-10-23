@@ -17,12 +17,36 @@ double underdogMultiplier(TeamRecord? record) {
   return (raw * 10).round() / 10;
 }
 
+/// Widest score range a bet can name, in points between its two ends.
+const maxScoreRangeWidth = 8;
+
+/// Extra bonus for each point narrower than [maxScoreRangeWidth].
+const scoreRangeStep = 0.5;
+
+/// Whether [range] is a score range a bet may name.
+bool isValidScoreRange(ScoreRange range) =>
+    range.low >= 0 && range.width >= 0 && range.width <= maxScoreRangeWidth;
+
+/// Bonus on a winning payout for guessing the winner's score within [range].
+///
+/// The widest range allowed gets no bonus (1.0x), and each point narrower adds
+/// [scoreRangeStep], up to 5.0x for an exact score. No range means no bonus.
+double scoreRangeMultiplier(ScoreRange? range) {
+  if (range == null) return 1.0;
+  return 1 + (maxScoreRangeWidth - range.width) * scoreRangeStep;
+}
+
+/// Every bonus a winning [bet] gets: underdog and score range together.
+double totalMultiplier(Bet bet) =>
+    bet.multiplier * scoreRangeMultiplier(bet.scoreRange);
+
 /// [payout] with [multiplier] applied, rounded to whole coins.
 int applyMultiplier(int payout, double multiplier) =>
     (payout * multiplier).round();
 
-/// Splits the coins bet on a finished game between the players who backed
-/// [winner].
+/// Splits the coins bet on a finished game between the players whose bets won:
+/// they backed [winner] and, if they named a score range, the winner's
+/// [winningScore] fell inside it.
 ///
 /// Each winner gets their own stake back plus a share of the losing side's
 /// coins in proportion to how much they staked, so together the winners take
@@ -32,10 +56,16 @@ int applyMultiplier(int payout, double multiplier) =>
 ///
 /// Returns the payout for every player in [bets], keyed the same way; losers
 /// get 0.
-Map<String, int> splitPool(Map<String, Bet> bets, TeamSide? winner) {
+Map<String, int> splitPool(
+  Map<String, Bet> bets,
+  TeamSide? winner, {
+  int? winningScore,
+}) {
   int sum(Iterable<Bet> bets) => bets.fold(0, (total, b) => total + b.amount);
 
-  final winningPool = sum(bets.values.where((b) => b.side == winner));
+  final winningPool = sum(
+    bets.values.where((b) => b.wins(winner, winningScore)),
+  );
   if (winningPool == 0) {
     return {for (final e in bets.entries) e.key: e.value.amount};
   }
@@ -44,7 +74,7 @@ Map<String, int> splitPool(Map<String, Bet> bets, TeamSide? winner) {
   final payouts = <String, int>{};
   final remainders = <String, int>{};
   for (final MapEntry(key: player, value: bet) in bets.entries) {
-    if (bet.side != winner) {
+    if (!bet.wins(winner, winningScore)) {
       payouts[player] = 0;
       continue;
     }

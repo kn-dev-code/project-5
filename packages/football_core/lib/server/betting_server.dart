@@ -1,10 +1,13 @@
 import 'dart:convert';
 
-import '../data/game_feed.dart';
+import '../api/betting_api.dart';
+
+import '../feeds/game_feed.dart';
 import '../models/bet.dart';
 import '../models/crowd_stats.dart';
 import '../models/game.dart';
-import '../models/shop_item.dart';
+import '../models/game_notification.dart';
+import '../models/shop_catalog.dart';
 import 'account_server.dart';
 import 'fake_players.dart';
 import 'payouts.dart';
@@ -30,20 +33,24 @@ class ShopRejected implements Exception {
   String toString() => message;
 }
 
-/// Stand-in for the betting backend. It owns every player's coins and bets,
+/// The betting backend. It owns every player's coins and bets,
 /// watches the scores feed, and pays out each game exactly once when it ends:
 /// players who backed the winner get their stake back plus a share of the
 /// pool (see [splitPool]), times an underdog bonus based on the team's record
-/// (see [underdogMultiplier]).
+/// (see [underdogMultiplier]). Players can also name a range for the winner's
+/// score: a narrower range earns a bigger bonus (see [scoreRangeMultiplier]),
+/// but the bet loses if the score falls outside it.
+///
+/// Players are sent a [GameNotification] with the score at halftime of each
+/// game they bet on, and another with the outcome once it is settled.
 ///
 /// Players are identified by the session token [AccountServer] gave them, so
 /// a request can only touch the coins of whoever logged in. Calls with an
 /// invalid token throw [AuthException].
 ///
-/// It doesn't use Flutter, so it can be moved onto a real server unchanged.
-///
-/// TODO: Run this on a real server and have the app call it over the network.
-class BettingServer {
+/// It doesn't use Flutter. The football_server package serves it over HTTP,
+/// and the app runs it in-process for tests and offline play.
+class BettingServer implements BettingApi {
   BettingServer({
     required GameFeed feed,
     required ServerStorage storage,
@@ -57,6 +64,13 @@ class BettingServer {
 
   /// Coins awarded for a successful daily claim.
   static const dailyRewardAmount = 250;
+
+  /// Coins given once a day to a player who is out of coins with nothing left
+  /// riding on a game, so they can always keep betting.
+  static const bailoutAmount = 100;
+
+  /// Older notifications are dropped once a player has more than this many.
+  static const maxNotifications = 50;
 
   /// How many bot players bet alongside real ones.
   final int botCount;
@@ -72,8 +86,12 @@ class BettingServer {
   /// Games from the latest feed fetch, keyed by id.
   Map<String, Game> _games = {};
 
+  /// The game with [id] from the latest fetch, if it was listed.
+  Game? gameById(String id) => _games[id];
+
   /// Fetches the latest games. Bots bet on each game the first time it shows
   /// up, and games that have just finished are settled.
+  @override
   Future<List<Game>> fetchGames() async {
     final games = await _feed.fetchGames();
     final ledger = await _ledger();
@@ -83,6 +101,10 @@ class BettingServer {
     for (final game in games) {
       if (ledger.seeded.add(game.id)) {
         _placeBotBets(ledger, game);
+      }
+
+      if (game.isHalftimeOrLater && ledger.halftimeSent.add(game.id)) {
+        _notifyHalftime(ledger, game);
       }
 
       if (game.isFinished && ledger.settled.add(game.id)) {
@@ -109,39 +131,43 @@ class BettingServer {
   }
 
   /// Returns a player's current spendable coin balance.
+  @override
   Future<int> balance(String token) async {
     final player = await _playerFor(token);
     return (await _ledger()).balance(player);
   }
 
   /// Items owned by the player, returned as catalog ids.
+  @override
   Future<Set<String>> ownedShopItems(String token) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
     return Set.unmodifiable({
-      startingTheme.id,
+      startingThemeListing.id,
       ...(ledger.ownedShopItems[player] ?? <String>{}),
     });
   }
 
   /// The id of the player's active theme, defaulting to the free basic theme.
+  @override
   Future<String> activeShopTheme(String token) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
-    return ledger.activeShopThemes[player] ?? startingTheme.id;
+    return ledger.activeShopThemes[player] ?? startingThemeListing.id;
   }
 
   /// Activates one owned theme. Background items cannot be activated as themes.
+  @override
   Future<void> setActiveShopTheme(String token, String themeId) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
-    final item = themeId == startingTheme.id
-        ? startingTheme
-        : _shopItemById(themeId);
+    final item = themeId == startingThemeListing.id
+        ? startingThemeListing
+        : shopListingById(themeId);
     if (item == null || item.type != ShopItemType.theme) {
       throw const ShopRejected('That theme is unavailable.');
     }
-    if (themeId != startingTheme.id &&
+    if (themeId != startingThemeListing.id &&
         !(ledger.ownedShopItems[player]?.contains(themeId) ?? false)) {
       throw const ShopRejected('Purchase this theme before activating it.');
     }
@@ -150,6 +176,7 @@ class BettingServer {
   }
 
   /// The id of the player's active background, or null if none is set.
+  @override
   Future<String?> activeShopBackground(String token) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
@@ -158,6 +185,7 @@ class BettingServer {
 
   /// Shows one owned background, or goes back to none when [backgroundId] is
   /// null.
+  @override
   Future<void> setActiveShopBackground(
     String token,
     String? backgroundId,
@@ -169,7 +197,7 @@ class BettingServer {
       await _save(ledger);
       return;
     }
-    final item = _shopItemById(backgroundId);
+    final item = shopListingById(backgroundId);
     if (item == null || item.type != ShopItemType.background) {
       throw const ShopRejected('That background is unavailable.');
     }
@@ -182,10 +210,11 @@ class BettingServer {
 
   /// Purchases a catalog item using the player's spendable coins.
   /// The balance deduction and ownership record are saved together.
+  @override
   Future<int> purchaseShopItem(String token, String itemId) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
-    final item = _shopItemById(itemId);
+    final item = shopListingById(itemId);
     if (item == null) throw const ShopRejected('That item is unavailable.');
 
     final owned = ledger.ownedShopItems.putIfAbsent(player, () => <String>{});
@@ -202,13 +231,6 @@ class BettingServer {
     owned.add(itemId);
     await _save(ledger);
     return ledger.balance(player);
-  }
-
-  static ShopItem? _shopItemById(String id) {
-    for (final item in shopItems) {
-      if (item.id == id) return item;
-    }
-    return null;
   }
 
   // ------------------------------------------------------------
@@ -229,6 +251,7 @@ class BettingServer {
   /// Returns true if the player can claim today's daily reward.
   ///
   /// Claims reset at midnight UTC.
+  @override
   Future<bool> canClaimDailyReward(String token) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
@@ -243,6 +266,7 @@ class BettingServer {
   ///
   /// Rewards are granted once per UTC calendar day for each player.
   /// A second claim on the same day throws [BetRejected].
+  @override
   Future<int> claimDailyReward(String token) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
@@ -266,6 +290,31 @@ class BettingServer {
     await _save(ledger);
 
     return newBalance;
+  }
+
+  /// Gives the player [bailoutAmount] coins if they have none left and no
+  /// unsettled bets that could win some back. Works once per UTC day.
+  ///
+  /// Returns the coins given, or 0 if the player didn't need or can't get a
+  /// bailout yet.
+  @override
+  Future<int> claimBailoutIfBroke(String token) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+
+    final today = _todayUtc();
+    final lastBailout = ledger.bailouts[player];
+    if (lastBailout != null && lastBailout.compareTo(today) >= 0) return 0;
+    if (ledger.balance(player) > 0) return 0;
+    final hasActiveBet = ledger.bets.values.any(
+      (bets) => bets[player]?.isSettled == false,
+    );
+    if (hasActiveBet) return 0;
+
+    ledger.balances[player] = ledger.balance(player) + bailoutAmount;
+    ledger.bailouts[player] = today;
+    await _save(ledger);
+    return bailoutAmount;
   }
 
   /// Returns the UTC date of the player's last daily reward claim.
@@ -297,10 +346,128 @@ class BettingServer {
   }
 
   // ------------------------------------------------------------
+  // NOTIFICATIONS
+  // ------------------------------------------------------------
+
+  /// The player's notifications, newest first.
+  @override
+  Future<List<GameNotification>> notifications(String token) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    return List.unmodifiable(
+      (ledger.notifications[player] ?? const []).reversed,
+    );
+  }
+
+  /// Marks all of the player's notifications as read.
+  @override
+  Future<void> markNotificationsRead(String token) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+    final notifications = ledger.notifications[player];
+    if (notifications == null || notifications.every((n) => n.read)) return;
+    ledger.notifications[player] = [
+      for (final n in notifications) n.markedRead(),
+    ];
+    await _save(ledger);
+  }
+
+  /// Tells every player with a bet on [game] the score at halftime, or the
+  /// latest score if the server first saw the game after halftime.
+  static void _notifyHalftime(_Ledger ledger, Game game) {
+    final bets = ledger.bets[game.id];
+    if (bets == null) return;
+
+    final when = game.quarter! <= 3 ? 'Halftime' : game.gameClock!;
+    for (final MapEntry(key: player, value: bet) in bets.entries) {
+      if (isBot(player)) continue;
+      _notify(
+        ledger,
+        player,
+        game.id,
+        GameNotificationKind.halftime,
+        '$when: ${game.homeTeam} ${game.homeScore} - '
+        '${game.awayScore} ${game.awayTeam}',
+        _halftimeStatus(game, bet),
+      );
+    }
+  }
+
+  static String _halftimeStatus(Game game, Bet bet) {
+    final team = game.teamName(bet.side);
+    final other = bet.side == TeamSide.home ? TeamSide.away : TeamSide.home;
+    final score = game.score(bet.side);
+    final lead = score - game.score(other);
+    final standing = lead > 0
+        ? '$team leads by $lead.'
+        : lead < 0
+        ? '$team trails by ${-lead}.'
+        : "It's tied.";
+    final status = 'Your ${bet.amount}-coin bet on $team: $standing';
+
+    final range = bet.scoreRange;
+    if (range == null) return status;
+    if (score > range.high) {
+      return '$status $team already has $score points, above your $range '
+          'range.';
+    }
+    return '$status $team has $score points; your range is $range.';
+  }
+
+  static String _resultTitle(Game game) {
+    final winner = game.winner;
+    if (winner == null) {
+      return '${game.homeTeam} and ${game.awayTeam} tied '
+          '${game.homeScore}-${game.awayScore}';
+    }
+    final loser = winner == TeamSide.home ? TeamSide.away : TeamSide.home;
+    return '${game.teamName(winner)} beat ${game.teamName(loser)} '
+        '${game.score(winner)}-${game.score(loser)}';
+  }
+
+  static String _resultStatus(Game game, Bet bet, int payout) {
+    if (bet.wins(game.winner, game.winningScore)) {
+      return 'You won $payout coins on your ${bet.amount}-coin bet.';
+    }
+    if (payout > 0) return 'Your ${bet.amount} coins were refunded.';
+    final range = bet.scoreRange;
+    if (bet.side == game.winner && range != null) {
+      return 'Your pick was right, but ${game.winningScore} points missed '
+          'your $range range. You lost ${bet.amount} coins.';
+    }
+    return 'You lost ${bet.amount} coins.';
+  }
+
+  static void _notify(
+    _Ledger ledger,
+    String player,
+    String gameId,
+    GameNotificationKind kind,
+    String title,
+    String body,
+  ) {
+    final notifications = ledger.notifications.putIfAbsent(player, () => [])
+      ..add(
+        GameNotification(
+          id: ledger.nextNotificationId++,
+          gameId: gameId,
+          kind: kind,
+          title: title,
+          body: body,
+          sentAt: DateTime.now().toUtc(),
+        ),
+      );
+    if (notifications.length > maxNotifications) {
+      notifications.removeRange(0, notifications.length - maxNotifications);
+    }
+  }
+
+  // ------------------------------------------------------------
   // PLAYER BETS
   // ------------------------------------------------------------
 
   /// The player's bets keyed by game id.
+  @override
   Future<Map<String, Bet>> bets(String token) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
@@ -313,6 +480,7 @@ class BettingServer {
 
   /// Votes and coins bet on [game] by everyone except the player [token]
   /// belongs to, so the app can add the player's own bet back in.
+  @override
   Future<CrowdStats> crowd(Game game, {String? token}) async {
     final excluding = token == null ? null : await _playerFor(token);
 
@@ -344,12 +512,17 @@ class BettingServer {
 
   /// Takes [amount] coins from the player and stakes them on [side].
   /// Only live games take bets, and only one bet per player per game.
+  ///
+  /// With a [scoreRange], the bet also needs [side]'s final score to land
+  /// inside it, in exchange for a bigger payout.
+  @override
   Future<void> placeBet(
     String token,
     String gameId,
     TeamSide side,
-    int amount,
-  ) async {
+    int amount, {
+    ScoreRange? scoreRange,
+  }) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
 
@@ -357,13 +530,20 @@ class BettingServer {
       throw const BetRejected('Betting is closed for this game.');
     }
 
-    _stake(ledger, player, gameId, side, amount);
+    if (scoreRange != null && !isValidScoreRange(scoreRange)) {
+      throw const BetRejected(
+        'Score ranges must be at most $maxScoreRangeWidth points wide.',
+      );
+    }
+
+    _stake(ledger, player, gameId, side, amount, scoreRange: scoreRange);
 
     await _save(ledger);
   }
 
   /// Returns half of the player's stake once, while the game is before
   /// halftime. The remaining stake stays in the pool and can still win.
+  @override
   Future<int> cashOutHalf(String token, String gameId) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
@@ -395,6 +575,7 @@ class BettingServer {
       amount: bet.amount - refund,
       cashOutAmount: refund,
       multiplier: bet.multiplier,
+      scoreRange: bet.scoreRange,
     );
 
     ledger.balances[player] = ledger.balance(player) + refund;
@@ -405,6 +586,7 @@ class BettingServer {
   }
 
   /// Ids of games where the player's bet was settled since the last call.
+  @override
   Future<List<String>> takeResults(String token) async {
     final player = await _playerFor(token);
     final ledger = await _ledger();
@@ -436,8 +618,9 @@ class BettingServer {
     String player,
     String gameId,
     TeamSide side,
-    int amount,
-  ) {
+    int amount, {
+    ScoreRange? scoreRange,
+  }) {
     final balance = ledger.balance(player);
 
     if (amount <= 0 || amount > balance) {
@@ -454,6 +637,7 @@ class BettingServer {
       side: side,
       amount: amount,
       multiplier: underdogMultiplier(_games[gameId]?.record(side)),
+      scoreRange: scoreRange,
     );
 
     ledger.balances[player] = balance - amount;
@@ -466,13 +650,17 @@ class BettingServer {
       return;
     }
 
-    final payouts = splitPool(bets, game.winner);
+    final payouts = splitPool(
+      bets,
+      game.winner,
+      winningScore: game.winningScore,
+    );
 
     for (final MapEntry(key: player, value: bet) in bets.entries) {
-      // The underdog bonus only applies to winning bets, not refunds, and is
-      // paid on top of the pool rather than out of it.
-      final payout = bet.side == game.winner
-          ? applyMultiplier(payouts[player]!, bet.multiplier)
+      // Bonuses only apply to winning bets, not refunds, and are paid on top
+      // of the pool rather than out of it.
+      final payout = bet.wins(game.winner, game.winningScore)
+          ? applyMultiplier(payouts[player]!, totalMultiplier(bet))
           : payouts[player]!;
 
       bets[player] = Bet(
@@ -481,12 +669,21 @@ class BettingServer {
         payout: payout,
         cashOutAmount: bet.cashOutAmount,
         multiplier: bet.multiplier,
+        scoreRange: bet.scoreRange,
       );
 
       ledger.balances[player] = ledger.balance(player) + payout;
 
       if (!isBot(player)) {
         ledger.results.putIfAbsent(player, () => []).add(game.id);
+        _notify(
+          ledger,
+          player,
+          game.id,
+          GameNotificationKind.result,
+          _resultTitle(game),
+          _resultStatus(game, bet, payout),
+        );
       }
     }
   }
@@ -520,6 +717,11 @@ class _Ledger {
         (key, value) => MapEntry(key, value as String),
       ),
     )
+    ..bailouts.addAll(
+      (json['bailouts'] as Map<String, dynamic>? ?? {}).map(
+        (key, value) => MapEntry(key, value as String),
+      ),
+    )
     ..ownedShopItems.addAll({
       for (final MapEntry(key: player, value: ids)
           in (json['ownedShopItems'] as Map<String, dynamic>? ?? {}).entries)
@@ -546,6 +748,18 @@ class _Ledger {
     })
     ..seeded.addAll((json['seeded'] as List).cast<String>())
     ..settled.addAll((json['settled'] as List).cast<String>())
+    ..halftimeSent.addAll(
+      (json['halftimeSent'] as List? ?? const []).cast<String>(),
+    )
+    ..notifications.addAll({
+      for (final MapEntry(key: player, value: list)
+          in (json['notifications'] as Map<String, dynamic>? ?? {}).entries)
+        player: [
+          for (final n in list as List)
+            GameNotification.fromJson(n as Map<String, dynamic>),
+        ],
+    })
+    ..nextNotificationId = json['nextNotificationId'] as int? ?? 0
     ..results.addAll({
       for (final MapEntry(:key, :value)
           in (json['results'] as Map<String, dynamic>).entries)
@@ -559,6 +773,9 @@ class _Ledger {
   ///
   /// Dates are stored as YYYY-MM-DD in UTC.
   final dailyClaims = <String, String>{};
+
+  /// Last bailout per player, as YYYY-MM-DD in UTC.
+  final bailouts = <String, String>{};
 
   /// Purchased shop item ids, keyed by player id.
   final ownedShopItems = <String, Set<String>>{};
@@ -581,12 +798,22 @@ class _Ledger {
   /// Per player, settled games they haven't been told about yet.
   final results = <String, List<String>>{};
 
+  /// Games whose halftime notifications have been sent.
+  final halftimeSent = <String>{};
+
+  /// Notifications per player, oldest first.
+  final notifications = <String, List<GameNotification>>{};
+
+  /// Id for the next notification sent to anyone.
+  var nextNotificationId = 0;
+
   int balance(String player) =>
       balances[player] ?? BettingServer.startingBalance;
 
   Map<String, Object?> toJson() => {
     'balances': balances,
     'dailyClaims': dailyClaims,
+    'bailouts': bailouts,
     'ownedShopItems': {
       for (final entry in ownedShopItems.entries)
         entry.key: entry.value.toList(),
@@ -600,5 +827,11 @@ class _Ledger {
     'seeded': seeded.toList(),
     'settled': settled.toList(),
     'results': results,
+    'halftimeSent': halftimeSent.toList(),
+    'notifications': {
+      for (final MapEntry(key: player, value: list) in notifications.entries)
+        player: [for (final n in list) n.toJson()],
+    },
+    'nextNotificationId': nextNotificationId,
   };
 }

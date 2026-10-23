@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 import '../models/account.dart';
+import '../api/betting_api.dart';
 import 'password_hash.dart';
 import 'server_storage.dart';
 
@@ -18,15 +19,15 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
-/// Stand-in for the accounts backend. It creates accounts, checks passwords
+/// The accounts backend. It creates accounts, checks passwords
 /// and hands out session tokens that the app sends with every other request.
 ///
 /// Passwords are only stored as salted PBKDF2 hashes, and session tokens only
 /// as SHA-256 hashes, so a copy of the stored data can't be used to sign in.
 ///
-/// It doesn't use Flutter, so it can be moved onto a real server unchanged.
-// TODO: run this on a real server and have the app call it over the network.
-class AccountServer {
+/// It doesn't use Flutter. The football_server package serves it over HTTP,
+/// and the app runs it in-process for tests and offline play.
+class AccountServer implements AccountApi {
   AccountServer({
     required this._storage,
     this.hashIterations = 100000,
@@ -55,6 +56,7 @@ class AccountServer {
   _AccountDb? _loaded;
 
   /// Creates an account and logs it in, returning the session token.
+  @override
   Future<String> createAccount(String username, String password) async {
     username = username.trim();
     if (!_usernamePattern.hasMatch(username)) {
@@ -87,6 +89,7 @@ class AccountServer {
   }
 
   /// Checks [username] and [password] and returns a new session token.
+  @override
   Future<String> logIn(String username, String password) async {
     final db = await _db();
     final account = db.byUsername(username.trim());
@@ -106,6 +109,7 @@ class AccountServer {
   }
 
   /// Ends the session for [token]. Does nothing if it already ended.
+  @override
   Future<void> logOut(String token) async {
     final db = await _db();
     if (db.sessions.remove(_hashToken(token)) != null) await _save(db);
@@ -113,6 +117,7 @@ class AccountServer {
 
   /// The account [token] belongs to. Throws [AuthException] if the session
   /// has ended or never existed.
+  @override
   Future<Account> accountFor(String token) async {
     final db = await _db();
     final key = _hashToken(token);

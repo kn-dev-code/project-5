@@ -1,8 +1,7 @@
 import 'dart:convert';
 
+import 'package:football_core/models/game.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import '../models/game.dart';
 
 /// Saves the user's winner picks on the device, keyed by game id.
 class PickStore {

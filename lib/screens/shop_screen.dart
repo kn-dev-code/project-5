@@ -1,23 +1,24 @@
 import 'package:flutter/material.dart';
+import 'package:football_core/api/betting_api.dart';
 
 import '../data/auth.dart';
 import '../data/app_theme.dart';
 import '../data/backend.dart';
+import '../data/errors.dart';
 import '../models/shop_item.dart';
-import '../server/betting_server.dart';
 
 class ShopScreen extends StatefulWidget {
   const ShopScreen({super.key, required this.session, this.server});
 
   final Session session;
-  final BettingServer? server;
+  final BettingApi? server;
 
   @override
   State<ShopScreen> createState() => _ShopScreenState();
 }
 
 class _ShopScreenState extends State<ShopScreen> {
-  late final BettingServer _server = widget.server ?? backend;
+  late final BettingApi _server = widget.server ?? backend;
   int _balance = 0;
   Set<String> _owned = {};
   String _activeThemeId = startingTheme.id;
@@ -32,12 +33,22 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 
   Future<void> _refresh() async {
-    final (balance, owned, activeThemeId, activeBackgroundId) = await (
-      _server.balance(widget.session.token),
-      _server.ownedShopItems(widget.session.token),
-      _server.activeShopTheme(widget.session.token),
-      _server.activeShopBackground(widget.session.token),
-    ).wait;
+    final (int, Set<String>, String, String?) loaded;
+    try {
+      loaded = await (
+        _server.balance(widget.session.token),
+        _server.ownedShopItems(widget.session.token),
+        _server.activeShopTheme(widget.session.token),
+        _server.activeShopBackground(widget.session.token),
+      ).wait;
+    } on ParallelWaitError catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(userMessage(error)!)),
+      );
+      return;
+    }
+    final (balance, owned, activeThemeId, activeBackgroundId) = loaded;
     if (!mounted) return;
     final activeTheme = _themeById(activeThemeId);
     if (activeTheme != null) appTheme.activate(activeTheme);
@@ -75,10 +86,12 @@ class _ShopScreenState extends State<ShopScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${item.name} added to your inventory.')),
       );
-    } on ShopRejected catch (error) {
+    } catch (error) {
+      final message = userMessage(error);
+      if (message == null) rethrow;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
+        SnackBar(content: Text(message)),
       );
     } finally {
       if (mounted) setState(() => _busyItem = null);
@@ -95,10 +108,12 @@ class _ShopScreenState extends State<ShopScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${item.name} is now active.')),
       );
-    } on ShopRejected catch (error) {
+    } catch (error) {
+      final message = userMessage(error);
+      if (message == null) rethrow;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
+        SnackBar(content: Text(message)),
       );
     } finally {
       if (mounted) setState(() => _busyItem = null);
@@ -124,10 +139,12 @@ class _ShopScreenState extends State<ShopScreen> {
           ),
         ),
       );
-    } on ShopRejected catch (error) {
+    } catch (error) {
+      final message = userMessage(error);
+      if (message == null) rethrow;
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
+        SnackBar(content: Text(message)),
       );
     } finally {
       if (mounted) setState(() => _busyItem = null);

@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:football_core/models/bet.dart';
+import 'package:football_core/models/crowd_stats.dart';
+import 'package:football_core/models/game.dart';
+import 'package:football_core/models/team_record.dart';
+import 'package:football_core/server/payouts.dart';
 
-import '../models/bet.dart';
-import '../models/crowd_stats.dart';
-import '../models/game.dart';
-import '../models/team_record.dart';
-import '../server/payouts.dart';
-
-/// What the user chose: the side they picked and how many coins they bet on
-/// it (0 for no new bet).
-typedef PickResult = ({TeamSide side, int bet});
+/// What the user chose: the side they picked, how many coins they bet on it
+/// (0 only when they already had a bet), and the winner's score range they bet on, if any.
+typedef PickResult = ({TeamSide side, int bet, ScoreRange? scoreRange});
 
 class PickWinnerScreen extends StatefulWidget {
   const PickWinnerScreen({
@@ -43,6 +42,11 @@ class PickWinnerScreen extends StatefulWidget {
 class _PickWinnerScreenState extends State<PickWinnerScreen> {
   late TeamSide? _pick = widget.existingBet?.side ?? widget.initialPick;
   final _betController = TextEditingController();
+  final _lowController = TextEditingController();
+  final _highController = TextEditingController();
+
+  /// Whether the user wants to also bet on the winner's score range.
+  bool _useScoreRange = false;
 
   bool get _locked => widget.existingBet != null;
 
@@ -51,6 +55,37 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
   String? get _betError => _betAmount > widget.balance
       ? 'You only have ${widget.balance} coins'
       : null;
+
+  bool get _rangeActive => !_locked && _betAmount > 0 && _useScoreRange;
+
+  /// The score range as entered, or null if it is off or invalid.
+  ScoreRange? get _scoreRange {
+    if (!_rangeActive) return null;
+    final low = int.tryParse(_lowController.text);
+    final high = int.tryParse(_highController.text);
+    if (low == null || high == null) return null;
+    final range = ScoreRange(low, high);
+    return isValidScoreRange(range) ? range : null;
+  }
+
+  String? get _rangeError {
+    if (!_rangeActive) return null;
+    final low = int.tryParse(_lowController.text);
+    final high = int.tryParse(_highController.text);
+    if (low == null || high == null) return 'Enter both ends of the range';
+    if (high < low) return 'The high score must be at least the low score';
+    if (high - low > maxScoreRangeWidth) {
+      return 'The range can be at most $maxScoreRangeWidth points wide';
+    }
+    return null;
+  }
+
+  /// Every new pick needs a bet; with an existing bet the pick is locked.
+  bool get _canConfirm =>
+      _pick != null &&
+      (_locked || _betAmount > 0) &&
+      _betError == null &&
+      _rangeError == null;
 
   /// The user's bet as it would stand if they confirmed now.
   Bet? get _bet {
@@ -61,13 +96,24 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
       side: pick,
       amount: _betAmount,
       multiplier: underdogMultiplier(widget.game.record(pick)),
+      scoreRange: _scoreRange,
     );
   }
 
   static int _payoutIfWon(CrowdStats crowd, Bet bet) => applyMultiplier(
     crowd.winningPayout(bet.side, bet.amount),
-    bet.multiplier,
+    totalMultiplier(bet),
   );
+
+  /// The bonuses a winning [bet] gets, e.g. ' with a 1.5x underdog bonus'.
+  static String _bonusText(Bet bet) {
+    final range = scoreRangeMultiplier(bet.scoreRange);
+    final bonuses = [
+      if (bet.multiplier > 1) '${bet.multiplier}x underdog bonus',
+      if (range > 1) '${range}x score range bonus',
+    ];
+    return bonuses.isEmpty ? '' : ' with a ${bonuses.join(' and a ')}';
+  }
 
   /// Coins back per coin bet on [side], underdog bonus included.
   double? _oddsFor(CrowdStats crowd, TeamSide side) {
@@ -82,24 +128,30 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
   @override
   void dispose() {
     _betController.dispose();
+    _lowController.dispose();
+    _highController.dispose();
     super.dispose();
   }
 
   /// Pops with the [PickResult]; the caller is responsible for saving it.
   void _confirm() {
     final pick = _pick;
-    if (pick == null || _betError != null) return;
+    if (pick == null || !_canConfirm) return;
     final bet = _locked ? 0 : _betAmount;
+    final scoreRange = _scoreRange;
 
     final team = widget.game.teamName(pick);
     final messenger = ScaffoldMessenger.of(context);
-    Navigator.of(context).pop<PickResult>((side: pick, bet: bet));
+    Navigator.of(context)
+        .pop<PickResult>((side: pick, bet: bet, scoreRange: scoreRange));
     messenger.showSnackBar(
       SnackBar(
         content: Text(
-          bet > 0
-              ? 'You picked $team to win and bet $bet coins!'
-              : 'You picked $team to win!',
+          bet <= 0
+              ? 'You picked $team to win!'
+              : scoreRange != null
+              ? 'You bet $bet coins on $team winning with $scoreRange points!'
+              : 'You picked $team to win and bet $bet coins!',
         ),
       ),
     );
@@ -190,7 +242,9 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                   if (widget.existingBet case final existing?)
                     Text(
                       'You bet ${existing.amount} coins on '
-                      '${game.teamName(existing.side)}. Bets are final.',
+                      '${game.teamName(existing.side)}'
+                      '${existing.scoreRange == null ? '' : ' scoring ${existing.scoreRange} points'}'
+                      '. Bets are final.',
                     )
                   else
                     TextField(
@@ -199,8 +253,12 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                       onChanged: (_) => setState(() {}),
                       decoration: InputDecoration(
-                        labelText: 'Amount (optional)',
-                        helperText: 'Balance: ${widget.balance} coins',
+                        labelText: 'Amount',
+                        helperText: widget.balance > 0
+                            ? 'Balance: ${widget.balance} coins · '
+                                  'every pick needs a bet'
+                            : 'No coins left. Wait for your bets to settle, '
+                                  'or come back tomorrow.',
                         errorText: _betError,
                         prefixIcon: const Icon(Icons.monetization_on),
                         border: const OutlineInputBorder(),
@@ -225,14 +283,65 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'If ${game.teamName(bet.side)} wins you get '
-                      '${_payoutIfWon(crowd, bet)} coins'
-                      '${bet.multiplier > 1 ? ' with a ${bet.multiplier}x underdog bonus' : ''}. '
+                      'If ${game.teamName(bet.side)} wins'
+                      '${bet.scoreRange == null ? '' : ' with ${bet.scoreRange} points'} '
+                      'you get ${_payoutIfWon(crowd, bet)} coins'
+                      '${_bonusText(bet)}. '
                       'Pool: ${crowd.totalPool} coins.',
                       style: textTheme.bodyMedium?.copyWith(
                         color: colors.primary,
                       ),
                     ),
+                  ],
+                  if (!_locked && _betAmount > 0 && _betError == null) ...[
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text("Bet on the winner's score"),
+                      subtitle: Text(
+                        'Up to $maxScoreRangeWidth points wide. Each point '
+                        'narrower adds ${scoreRangeStep}x, but you lose if '
+                        'the score lands outside it.',
+                      ),
+                      value: _useScoreRange,
+                      onChanged: (value) =>
+                          setState(() => _useScoreRange = value),
+                    ),
+                    if (_useScoreRange) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _ScoreField(
+                              controller: _lowController,
+                              label: 'Low score',
+                              onChanged: () => setState(() {}),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _ScoreField(
+                              controller: _highController,
+                              label: 'High score',
+                              onChanged: () => setState(() {}),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _rangeError ??
+                            '${scoreRangeMultiplier(_scoreRange)}x score '
+                                'range bonus if the winner scores '
+                                '$_scoreRange points.',
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: _rangeError == null
+                              ? colors.tertiary
+                              : colors.error,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ],
                 ],
               ),
@@ -240,7 +349,7 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
               child: FilledButton(
-                onPressed: _pick == null || _betError != null ? null : _confirm,
+                onPressed: _canConfirm ? _confirm : null,
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
@@ -252,6 +361,30 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
       ),
     );
   }
+}
+
+class _ScoreField extends StatelessWidget {
+  const _ScoreField({
+    required this.controller,
+    required this.label,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    controller: controller,
+    keyboardType: TextInputType.number,
+    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+    onChanged: (_) => onChanged(),
+    decoration: InputDecoration(
+      labelText: label,
+      border: const OutlineInputBorder(),
+    ),
+  );
 }
 
 class _TeamOption extends StatelessWidget {
