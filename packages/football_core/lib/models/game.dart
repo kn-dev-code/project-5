@@ -78,16 +78,31 @@ class Game {
 
   bool get isLive => status == GameStatus.live;
 
+  /// Seconds left in the quarter, or null if [clock] isn't set or readable.
+  int? get _secondsLeft {
+    final parts = clock?.split(':');
+    if (parts == null || parts.length != 2) return null;
+    final minutes = int.tryParse(parts[0]);
+    final seconds = int.tryParse(parts[1]);
+    if (minutes == null || seconds == null) return null;
+    return minutes * 60 + seconds;
+  }
+
+  /// Whether bets are taken: from when the game is listed until the end of
+  /// the first quarter.
+  bool get isBettingOpen {
+    if (status == GameStatus.upcoming) return true;
+    if (!isLive || quarter != 1) return false;
+    // Feeds without a clock keep betting open for the whole first quarter.
+    return (_secondsLeft ?? 1) > 0;
+  }
+
   /// Whether a football game is still before halftime according to its feed.
   bool get isBeforeHalftime {
     if (!isLive) return false;
     if (quarter == 1) return true;
-    if (quarter != 2 || clock == null) return false;
-    final parts = clock!.split(':');
-    if (parts.length != 2) return false;
-    final minutes = int.tryParse(parts[0]);
-    final seconds = int.tryParse(parts[1]);
-    return minutes != null && seconds != null && minutes * 60 + seconds > 0;
+    if (quarter != 2) return false;
+    return (_secondsLeft ?? 0) > 0;
   }
 
   /// Whether a live game has reached halftime or gone past it.

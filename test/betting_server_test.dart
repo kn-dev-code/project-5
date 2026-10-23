@@ -28,6 +28,7 @@ class _ScriptedFeed implements GameFeed {
   Future<List<Game>> fetchGamesById(Iterable<String> ids) async => unlisted;
 }
 
+/// Live games are in the first quarter, so they still take bets.
 Game _game(GameStatus status, {int home = 0, int away = 0}) => Game(
   id: 'x1',
   league: 'Pro Football',
@@ -36,6 +37,8 @@ Game _game(GameStatus status, {int home = 0, int away = 0}) => Game(
   status: status,
   homeScore: home,
   awayScore: away,
+  quarter: status == GameStatus.live ? 1 : null,
+  clock: status == GameStatus.live ? '10:00' : null,
 );
 
 void main() {
@@ -206,6 +209,7 @@ void main() {
         status: status,
         homeScore: home,
         awayScore: away,
+        quarter: status == GameStatus.live ? 1 : null,
         homeRecord: const TeamRecord(9, 1),
         awayRecord: const TeamRecord(0, 10),
       );
@@ -457,6 +461,7 @@ void main() {
         homeTeam: 'Alpha Aces',
         awayTeam: 'Beta Bulls',
         status: GameStatus.live,
+        quarter: 1,
         awayRecord: TeamRecord(0, 10),
       );
       final server = BettingServer(
@@ -517,7 +522,7 @@ void main() {
         homeTeam: 'Alpha Aces',
         awayTeam: 'Beta Bulls',
         status: GameStatus.live,
-        quarter: 2,
+        quarter: 1,
         clock: '3:00',
       );
       final halftime = Game(

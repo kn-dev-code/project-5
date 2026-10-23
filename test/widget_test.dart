@@ -60,16 +60,25 @@ Future<void> _openAppAndLogIn(
   await tester.pumpAndSettle();
 }
 
-/// The first live game the shared feed lists, which is the first card in the
-/// Live Now section.
-Future<Game> _liveGame() async =>
-    (await gameFeed.fetchGames()).firstWhere((g) => g.isLive);
+/// The first game in the shared feed that still takes bets. There's always
+/// one, since upcoming games take bets and kick off every few minutes.
+Future<Game> _bettableGame() async =>
+    (await gameFeed.fetchGames()).firstWhere((g) => g.isBettingOpen);
 
-/// A live game whose away team is below .500. Even kickoff slots always do this.
+/// A game still taking bets whose away team is below .500. Even kickoff slots
+/// always have one, and there are always two upcoming slots in a row.
 Future<Game> _underdogAwayGame() async =>
     (await gameFeed.fetchGames()).firstWhere(
-      (game) => game.isLive && underdogMultiplier(game.awayRecord) > 1,
+      (game) => game.isBettingOpen && underdogMultiplier(game.awayRecord) > 1,
     );
+
+/// The card for [game] in the game list; the end time is unique to each game.
+Finder _cardFor(WidgetTester tester, Game game) {
+  final ends = MaterialLocalizations.of(
+    tester.element(find.text('Live Now')),
+  ).formatTimeOfDay(TimeOfDay.fromDateTime(game.endsAt!));
+  return find.textContaining('· ends $ends');
+}
 
 /// A betting server that only knows the games in [feed], and a player who is
 /// logged in to it.
@@ -182,10 +191,10 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Log In'), findsOneWidget);
   });
 
-  testWidgets('Select Game lists games and lets the user pick a live winner', (
+  testWidgets('Select Game lists games and lets the user bet on a winner', (
     WidgetTester tester,
   ) async {
-    final game = await _liveGame();
+    final game = await _bettableGame();
     await _openAppAndLogIn(tester, username: 'picker');
     // Let the first-login reward message go so later ones can show.
     await tester.pump(const Duration(seconds: 5));
@@ -197,7 +206,9 @@ void main() {
     expect(find.text(game.homeTeam), findsWidgets);
     expect(find.textContaining('bettor'), findsWidgets);
 
-    await tester.tap(find.text(game.homeTeam).first);
+    final card = _cardFor(tester, game);
+    await tester.scrollUntilVisible(card, 300);
+    await tester.tap(card);
     await tester.pumpAndSettle();
 
     expect(find.text('Who will win?'), findsOneWidget);
@@ -224,7 +235,8 @@ void main() {
       find.text('You picked ${game.awayTeam} to win and bet 10 coins!'),
       findsOneWidget,
     );
-    expect(find.text('Live Now'), findsOneWidget);
+    // Back on the game list, with the pick on the game's card.
+    expect(find.text('Select Game'), findsOneWidget);
     expect(find.text('Your pick: ${game.awayTeam}'), findsOneWidget);
     expect(await PickStore().loadPicks(), {game.id: TeamSide.away});
   });
@@ -267,7 +279,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Your pick: Alpha Aces (tap to change)'), findsOneWidget);
+    // Fourth quarter: betting is closed, so the pick can't be changed.
+    expect(find.text('Your pick: Alpha Aces'), findsOneWidget);
     expect(find.textContaining('Winner:'), findsNothing);
 
     await tester.pump(const Duration(seconds: 30));
@@ -292,9 +305,7 @@ void main() {
         BettingServer.startingBalance + BettingServer.dailyRewardAmount;
     expect(find.text('$loginBalance coins'), findsOneWidget);
 
-    final ends = MaterialLocalizations.of(tester.element(find.text('Live Now')))
-        .formatTimeOfDay(TimeOfDay.fromDateTime(game.endsAt!));
-    final card = find.textContaining('· ends $ends');
+    final card = _cardFor(tester, game);
     await tester.scrollUntilVisible(card, 300);
     await tester.tap(card);
     await tester.pumpAndSettle();
@@ -360,7 +371,7 @@ void main() {
       homeTeam: 'Alpha Aces',
       awayTeam: 'Beta Bulls',
       status: GameStatus.live,
-      quarter: 4,
+      quarter: 1,
       clock: '1:00',
     );
     const finished = Game(

@@ -203,6 +203,16 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                         color: colors.error,
                       ),
                     ),
+                  if (!_locked) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Bets close at the end of the first quarter.',
+                      textAlign: TextAlign.center,
+                      style: textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 32),
                   Text(
                     'Who will win?',

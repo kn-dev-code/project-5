@@ -511,7 +511,8 @@ class BettingServer implements BettingApi {
   }
 
   /// Takes [amount] coins from the player and stakes them on [side].
-  /// Only live games take bets, and only one bet per player per game.
+  /// Bets are taken until the end of the first quarter (see
+  /// [Game.isBettingOpen]), one per player per game.
   ///
   /// With a [scoreRange], the bet also needs [side]'s final score to land
   /// inside it, in exchange for a bigger payout.
@@ -526,8 +527,11 @@ class BettingServer implements BettingApi {
     final player = await _playerFor(token);
     final ledger = await _ledger();
 
-    if (_games[gameId]?.isLive != true) {
-      throw const BetRejected('Betting is closed for this game.');
+    if (_games[gameId]?.isBettingOpen != true) {
+      throw const BetRejected(
+        'Betting is closed for this game. Bets close at the end of the first '
+        'quarter.',
+      );
     }
 
     if (scoreRange != null && !isValidScoreRange(scoreRange)) {

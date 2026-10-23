@@ -134,7 +134,8 @@ void main() {
   });
 
   test('sends refusals back as the same exceptions', () async {
-    feed.games = [_game(GameStatus.upcoming)];
+    // Past the first quarter, so betting has closed.
+    feed.games = [_game(GameStatus.live, quarter: 2, clock: '14:00')];
     final me = await accounts.createAccount('carol', 'password1');
 
     await expectLater(
@@ -151,7 +152,8 @@ void main() {
         isA<BetRejected>().having(
           (e) => e.message,
           'message',
-          'Betting is closed for this game.',
+          'Betting is closed for this game. Bets close at the end of the '
+              'first quarter.',
         ),
       ),
     );

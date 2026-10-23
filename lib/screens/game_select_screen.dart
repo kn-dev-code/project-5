@@ -397,7 +397,7 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
               child: Text('No live games right now.'),
             ),
           ),
-        for (final game in live) _card(game, onTap: () => _openPick(game)),
+        for (final game in live) _card(game),
         if (upcoming.isNotEmpty) ...[
           const _SectionHeader('Upcoming'),
           for (final game in upcoming) _card(game),
@@ -410,12 +410,12 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     );
   }
 
-  Widget _card(Game game, {VoidCallback? onTap}) => _GameCard(
+  Widget _card(Game game) => _GameCard(
     game: game,
     crowd: _crowd(game),
     pick: _picks[game.id],
     bet: _bets[game.id],
-    onTap: onTap,
+    onTap: game.isBettingOpen ? () => _openPick(game) : null,
     onCashOut: _canCashOut(game, _bets[game.id])
         ? () => _cashOutHalf(game)
         : null,
@@ -500,7 +500,7 @@ class _GameCard extends StatelessWidget {
 
   final Bet? bet;
 
-  /// Only live games can be bet on, so only they get a tap handler.
+  /// Only games still taking bets get a tap handler.
   final VoidCallback? onTap;
 
   final VoidCallback? onCashOut;
@@ -513,7 +513,7 @@ class _GameCard extends StatelessWidget {
     final showScore = game.status != GameStatus.upcoming;
 
     return Opacity(
-      opacity: enabled || game.isFinished ? 1 : 0.6,
+      opacity: enabled || game.isLive || game.isFinished ? 1 : 0.6,
       child: Card(
         margin: const EdgeInsets.only(bottom: 12),
         clipBehavior: Clip.antiAlias,
@@ -567,7 +567,7 @@ class _GameCard extends StatelessWidget {
                     ),
                   ),
                 ],
-                if (pick != null || enabled) ...[
+                if (pick != null || enabled || game.isLive) ...[
                   const SizedBox(height: 12),
                   Text(
                     _pickLabel(),
@@ -608,7 +608,11 @@ class _GameCard extends StatelessWidget {
 
   String _pickLabel() {
     final pick = this.pick;
-    if (pick == null) return 'Tap to pick a winner';
+    if (pick == null) {
+      return onTap != null
+          ? 'Tap to pick a winner'
+          : 'Betting closed after the first quarter';
+    }
     final picked = 'Your pick: ${game.teamName(pick)}';
     if (game.isFinished) {
       return game.winner == pick ? '$picked - correct!' : '$picked - missed';
