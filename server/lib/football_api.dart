@@ -137,6 +137,12 @@ class FootballApi {
       );
       return _json(null);
     })
+    ..delete('/v1/games/<id>/bets', (Request request, String id) async {
+      final token = _token(request);
+      // Make sure the server knows the game hasn't kicked off.
+      await _latestGames();
+      return _json({'refund': await _betting.withdrawBet(token, id)});
+    })
     ..post('/v1/games/<id>/cash-out', (Request request, String id) async {
       final token = _token(request);
       await _latestGames();

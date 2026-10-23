@@ -262,6 +262,7 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
       ),
     );
     if (result == null) return;
+    if (result.withdraw) return _withdrawBet(game, confirmFirst: false);
     // A pick always comes with a bet, so it only counts if the bet goes
     // through. With an existing bet [result.bet] is 0 and the pick is unchanged.
     if (result.bet > 0) {
@@ -320,6 +321,58 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     } catch (e) {
       // The next refresh updates the count.
       if (userMessage(e) == null) rethrow;
+    }
+  }
+
+  /// Cancels the player's bet on an upcoming game and returns the whole
+  /// stake. Asks first when [confirmFirst], since it's one tap on the card.
+  Future<void> _withdrawBet(Game game, {bool confirmFirst = true}) async {
+    final bet = _bets[game.id];
+    if (bet == null) return;
+    if (confirmFirst) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Withdraw bet?'),
+          content: Text(
+            'Your ${bet.amount} coins on ${game.teamName(bet.side)} will be '
+            'returned. You can bet again until kickoff.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: sfx.withSound(() => Navigator.pop(context, false)),
+              child: const Text('Keep bet'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Withdraw'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    try {
+      final refund = await _server.withdrawBet(_token, game.id);
+      final (bets, balance, crowd) = await (
+        _server.bets(_token),
+        _server.balance(_token),
+        _server.crowd(game, token: _token),
+      ).wait;
+      if (!mounted) return;
+      setState(() {
+        _bets = bets;
+        _balance = balance;
+        _crowds = {..._crowds, game.id: crowd};
+      });
+      sfx.play(Sound.coins);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Bet withdrawn. $refund coins returned.')),
+      );
+    } catch (e) {
+      final message = userMessage(e);
+      if (message == null) rethrow;
+      if (mounted) _showMessage(message);
     }
   }
 
@@ -446,7 +499,13 @@ class _GameSelectScreenState extends State<GameSelectScreen> {
     onCashOut: _canCashOut(game, _bets[game.id])
         ? () => _cashOutHalf(game)
         : null,
+    onWithdraw: _canWithdraw(game, _bets[game.id])
+        ? sfx.withSound(() => _withdrawBet(game))
+        : null,
   );
+
+  static bool _canWithdraw(Game game, Bet? bet) =>
+      game.status == GameStatus.upcoming && bet != null && !bet.isSettled;
 
   static bool _canCashOut(Game game, Bet? bet) =>
       game.isBeforeHalftime &&
@@ -515,6 +574,7 @@ class _GameCard extends StatelessWidget {
     this.bet,
     this.onTap,
     this.onCashOut,
+    this.onWithdraw,
   });
 
   final Game game;
@@ -531,6 +591,9 @@ class _GameCard extends StatelessWidget {
   final VoidCallback? onTap;
 
   final VoidCallback? onCashOut;
+
+  /// Cancels the bet; only offered before kickoff.
+  final VoidCallback? onWithdraw;
 
   @override
   Widget build(BuildContext context) {
@@ -625,6 +688,17 @@ class _GameCard extends StatelessWidget {
                         label: Text(
                           'Cash out half (${bet!.amount ~/ 2} coins)',
                         ),
+                      ),
+                    ),
+                  ],
+                  if (onWithdraw != null) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: onWithdraw,
+                        icon: const Icon(Icons.undo),
+                        label: Text('Withdraw bet (${bet!.amount} coins back)'),
                       ),
                     ),
                   ],

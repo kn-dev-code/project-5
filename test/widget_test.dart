@@ -800,4 +800,92 @@ void main() {
     expect(find.textContaining('Betting is closed'), findsOneWidget);
     expect(await server.bets(session.token), isEmpty);
   });
+
+  testWidgets('The score range can be chosen before typing an amount', (
+    WidgetTester tester,
+  ) async {
+    const upcoming = Game(
+      id: 'x1',
+      league: 'Pro Football',
+      homeTeam: 'Alpha Aces',
+      awayTeam: 'Beta Bulls',
+      status: GameStatus.upcoming,
+    );
+    final (server, session) = await _testServer(
+      _ScriptedFeed([
+        [upcoming],
+      ]),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GameSelectScreen(session: session, server: server),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alpha Aces').first);
+    await tester.pumpAndSettle();
+
+    final rangeSwitch = find.text("Bet on the winner's score");
+    await tester.scrollUntilVisible(
+      rangeSwitch,
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(rangeSwitch, findsOneWidget);
+    await tester.ensureVisible(find.byType(Switch));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+    await tester.drag(find.byType(ListView).last, const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Low score'), '20');
+    await tester.enterText(find.widgetWithText(TextField, 'High score'), '24');
+    await tester.pump();
+    expect(
+      find.text('3.0x score range bonus if the winner scores 20-24 points.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('A bet on an upcoming game can be withdrawn from its card', (
+    WidgetTester tester,
+  ) async {
+    const upcoming = Game(
+      id: 'x1',
+      league: 'Pro Football',
+      homeTeam: 'Alpha Aces',
+      awayTeam: 'Beta Bulls',
+      status: GameStatus.upcoming,
+    );
+    final (server, session) = await _testServer(
+      _ScriptedFeed([
+        [upcoming],
+      ]),
+    );
+    await server.fetchGames();
+    await server.placeBet(session.token, 'x1', TeamSide.home, 150);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GameSelectScreen(session: session, server: server),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('850 coins'), findsOneWidget);
+    _sounds.played.clear();
+
+    final withdraw = find.text('Withdraw bet (150 coins back)');
+    await tester.scrollUntilVisible(withdraw, 100);
+    await tester.tap(withdraw);
+    await tester.pumpAndSettle();
+    expect(find.text('Withdraw bet?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Withdraw'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Bet withdrawn. 150 coins returned.'), findsOneWidget);
+    expect(find.text('1000 coins'), findsOneWidget);
+    expect(find.textContaining('Withdraw bet ('), findsNothing);
+    expect(_sounds.played, [Sound.tap, Sound.coins]);
+    expect(await server.bets(session.token), isEmpty);
+  });
 }

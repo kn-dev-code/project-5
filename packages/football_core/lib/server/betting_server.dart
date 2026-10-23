@@ -589,6 +589,31 @@ class BettingServer implements BettingApi {
     return refund;
   }
 
+  /// Cancels the player's bet on a game that hasn't kicked off and gives the
+  /// whole stake back, so they can bet again. Returns the coins refunded.
+  @override
+  Future<int> withdrawBet(String token, String gameId) async {
+    final player = await _playerFor(token);
+    final ledger = await _ledger();
+
+    if (_games[gameId]?.status != GameStatus.upcoming) {
+      throw const BetRejected('Bets can only be withdrawn before kickoff.');
+    }
+
+    final bet = ledger.bets[gameId]?[player];
+
+    if (bet == null || bet.isSettled) {
+      throw const BetRejected('You have no bet on this game to withdraw.');
+    }
+
+    ledger.bets[gameId]!.remove(player);
+    ledger.balances[player] = ledger.balance(player) + bet.amount;
+
+    await _save(ledger);
+
+    return bet.amount;
+  }
+
   /// Ids of games where the player's bet was settled since the last call.
   @override
   Future<List<String>> takeResults(String token) async {

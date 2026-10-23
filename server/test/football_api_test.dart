@@ -166,6 +166,13 @@ void main() {
       throwsA(isA<AuthException>()),
     );
 
+    // Bets on upcoming games can be withdrawn over HTTP.
+    feed.games = [_game(GameStatus.upcoming)];
+    await betting.fetchGames();
+    await betting.placeBet(me, 'nfl-1', TeamSide.home, 40);
+    expect(await betting.withdrawBet(me, 'nfl-1'), 40);
+    expect(await betting.bets(me), isEmpty);
+
     // The shop round-trips too.
     expect(await betting.purchaseShopItem(me, 'stadium_lights'), 750);
     await betting.setActiveShopBackground(me, 'stadium_lights');

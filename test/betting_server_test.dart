@@ -358,6 +358,51 @@ void main() {
       expect((await server.notifications(you)).every((n) => !n.read), isTrue);
     });
 
+    test('bets can be withdrawn in full until kickoff', () async {
+      final server = BettingServer(
+        feed: _ScriptedFeed([
+          [_game(GameStatus.upcoming)],
+          [_game(GameStatus.live)],
+        ]),
+        storage: MemoryStorage(),
+        accounts: accounts,
+        botCount: 0,
+      );
+      final me = await accounts.createAccount('changer', 'password1');
+      await server.fetchGames();
+      await expectLater(
+        server.withdrawBet(me, 'x1'),
+        throwsA(isA<BetRejected>()),
+      );
+
+      await server.placeBet(
+        me,
+        'x1',
+        TeamSide.home,
+        300,
+        scoreRange: const ScoreRange(20, 24),
+      );
+      expect(await server.withdrawBet(me, 'x1'), 300);
+      expect(await server.balance(me), 1000);
+      expect(await server.bets(me), isEmpty);
+      expect((await server.crowd(_game(GameStatus.upcoming))).homePool, 0);
+
+      // Free to bet again, on either side.
+      await server.placeBet(me, 'x1', TeamSide.away, 200);
+      await server.fetchGames();
+      await expectLater(
+        server.withdrawBet(me, 'x1'),
+        throwsA(
+          isA<BetRejected>().having(
+            (e) => e.message,
+            'message',
+            'Bets can only be withdrawn before kickoff.',
+          ),
+        ),
+      );
+      expect(await server.balance(me), 800);
+    });
+
     test('bails out a broke player once a day', () async {
       final server = BettingServer(
         feed: _ScriptedFeed([

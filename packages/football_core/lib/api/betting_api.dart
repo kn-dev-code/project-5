@@ -80,6 +80,9 @@ abstract interface class BettingApi {
   /// Returns the coins given back.
   Future<int> cashOutHalf(String token, String gameId);
 
+  /// Cancels a bet before kickoff. Returns the whole stake, given back.
+  Future<int> withdrawBet(String token, String gameId);
+
   /// Ids of games where the player's bet was settled since the last call.
   Future<List<String>> takeResults(String token);
 }

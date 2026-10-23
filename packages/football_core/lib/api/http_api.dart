@@ -276,6 +276,11 @@ class HttpBettingApi implements BettingApi {
           as int;
 
   @override
+  Future<int> withdrawBet(String token, String gameId) async =>
+      (await _object('DELETE', '${_game(gameId)}/bets', token: token))['refund']
+          as int;
+
+  @override
   Future<List<String>> takeResults(String token) async => [
     for (final id
         in (await _api.send('POST', 'v1/me/results/take', token: token))!

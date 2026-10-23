@@ -11,7 +11,13 @@ import '../widgets/game_time.dart';
 
 /// What the user chose: the side they picked, how many coins they bet on it
 /// (0 only when they already had a bet), and the winner's score range they bet on, if any.
-typedef PickResult = ({TeamSide side, int bet, ScoreRange? scoreRange});
+/// [withdraw] means they want their existing bet cancelled instead.
+typedef PickResult = ({
+  TeamSide side,
+  int bet,
+  ScoreRange? scoreRange,
+  bool withdraw,
+});
 
 class PickWinnerScreen extends StatefulWidget {
   const PickWinnerScreen({
@@ -59,7 +65,7 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
       ? 'You only have ${widget.balance} coins'
       : null;
 
-  bool get _rangeActive => !_locked && _betAmount > 0 && _useScoreRange;
+  bool get _rangeActive => !_locked && _useScoreRange;
 
   /// The score range as entered, or null if it is off or invalid.
   ScoreRange? get _scoreRange {
@@ -136,6 +142,21 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
     super.dispose();
   }
 
+  /// Bets can be withdrawn in full until kickoff.
+  bool get _canWithdraw =>
+      widget.existingBet != null && widget.game.status == GameStatus.upcoming;
+
+  /// Pops asking the caller to cancel the existing bet.
+  void _withdraw() {
+    final bet = widget.existingBet!;
+    Navigator.of(context).pop<PickResult>((
+      side: bet.side,
+      bet: 0,
+      scoreRange: null,
+      withdraw: true,
+    ));
+  }
+
   /// Pops with the [PickResult]; the caller is responsible for saving it.
   void _confirm() {
     final pick = _pick;
@@ -147,8 +168,12 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
 
     final team = widget.game.teamName(pick);
     final messenger = ScaffoldMessenger.of(context);
-    Navigator.of(context)
-        .pop<PickResult>((side: pick, bet: bet, scoreRange: scoreRange));
+    Navigator.of(context).pop<PickResult>((
+      side: pick,
+      bet: bet,
+      scoreRange: scoreRange,
+      withdraw: false,
+    ));
     messenger.showSnackBar(
       SnackBar(
         content: Text(
@@ -193,8 +218,10 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '${game.homeTeam}  ${game.homeScore} - ${game.awayScore}  '
-                    '${game.awayTeam}',
+                    game.status == GameStatus.upcoming
+                        ? '${game.homeTeam}  vs  ${game.awayTeam}'
+                        : '${game.homeTeam}  ${game.homeScore} - '
+                              '${game.awayScore}  ${game.awayTeam}',
                     textAlign: TextAlign.center,
                     style: textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
@@ -265,14 +292,27 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                   const SizedBox(height: 20),
                   Text('Bet coins', style: textTheme.titleMedium),
                   const SizedBox(height: 8),
-                  if (widget.existingBet case final existing?)
+                  if (widget.existingBet case final existing?) ...[
                     Text(
                       'You bet ${existing.amount} coins on '
                       '${game.teamName(existing.side)}'
                       '${existing.scoreRange == null ? '' : ' scoring ${existing.scoreRange} points'}'
-                      '. Bets are final.',
-                    )
-                  else
+                      '. ${_canWithdraw ? 'You can withdraw it until kickoff.' : 'Bets are final.'}',
+                    ),
+                    if (_canWithdraw) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton.icon(
+                          onPressed: sfx.withSound(_withdraw),
+                          icon: const Icon(Icons.undo),
+                          label: Text(
+                            'Withdraw bet (${existing.amount} coins back)',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ] else
                     TextField(
                       controller: _betController,
                       keyboardType: TextInputType.number,
@@ -290,36 +330,7 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                         border: const OutlineInputBorder(),
                       ),
                     ),
-                  if (bet != null && _betError == null) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Your odds: ${formatOdds(_payoutIfWon(crowd, bet) / bet.amount)} '
-                      'if you bet ${bet.amount} coins.',
-                      style: textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${crowd.bettors(bet.side)} '
-                      '${crowd.bettors(bet.side) == 1 ? 'player has' : 'players have'} '
-                      'bet on ${game.teamName(bet.side)}, '
-                      '${crowd.bettors(_other(bet.side))} on '
-                      '${game.teamName(_other(bet.side))}.',
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'If ${game.teamName(bet.side)} wins'
-                      '${bet.scoreRange == null ? '' : ' with ${bet.scoreRange} points'} '
-                      'you get ${_payoutIfWon(crowd, bet)} coins'
-                      '${_bonusText(bet)}. '
-                      'Pool: ${crowd.totalPool} coins.',
-                      style: textTheme.bodyMedium?.copyWith(
-                        color: colors.primary,
-                      ),
-                    ),
-                  ],
-                  if (!_locked && _betAmount > 0 && _betError == null) ...[
+                  if (!_locked) ...[
                     const SizedBox(height: 12),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
@@ -370,6 +381,35 @@ class _PickWinnerScreenState extends State<PickWinnerScreen> {
                         ),
                       ),
                     ],
+                  ],
+                  if (bet != null && _betError == null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Your odds: ${formatOdds(_payoutIfWon(crowd, bet) / bet.amount)} '
+                      'if you bet ${bet.amount} coins.',
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${crowd.bettors(bet.side)} '
+                      '${crowd.bettors(bet.side) == 1 ? 'player has' : 'players have'} '
+                      'bet on ${game.teamName(bet.side)}, '
+                      '${crowd.bettors(_other(bet.side))} on '
+                      '${game.teamName(_other(bet.side))}.',
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'If ${game.teamName(bet.side)} wins'
+                      '${bet.scoreRange == null ? '' : ' with ${bet.scoreRange} points'} '
+                      'you get ${_payoutIfWon(crowd, bet)} coins'
+                      '${_bonusText(bet)}. '
+                      'Pool: ${crowd.totalPool} coins.',
+                      style: textTheme.bodyMedium?.copyWith(
+                        color: colors.primary,
+                      ),
+                    ),
                   ],
                 ],
               ),
